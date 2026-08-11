@@ -22,6 +22,7 @@ import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentEventPa
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentPurposeEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.CredentialEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.LoginEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RegistrationEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.SessionEventPayloadBuilder;
@@ -174,6 +175,25 @@ public class PayloadBuilderFactory {
         List<ConsentEventPayloadBuilder> consentEventPayloadBuilders =
                 EventHookHandlerDataHolder.getInstance().getConsentEventPayloadBuilders();
         for (ConsentEventPayloadBuilder builder : consentEventPayloadBuilders) {
+            if (builder.getEventSchemaType().equals(eventSchemaType)) {
+                return builder;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get the organization management event payload builder.
+     *
+     * @param eventSchemaType Event schema type.
+     * @return Organization management event payload builder.
+     */
+    public static OrganizationManagementEventPayloadBuilder getOrganizationEventPayloadBuilder(
+            Constants.EventSchema eventSchemaType) {
+
+        List<OrganizationManagementEventPayloadBuilder> organizationManagementEventPayloadBuilders =
+                EventHookHandlerDataHolder.getInstance().getOrgManagementEventPayloadBuilders();
+        for (OrganizationManagementEventPayloadBuilder builder : organizationManagementEventPayloadBuilders) {
             if (builder.getEventSchemaType().equals(eventSchemaType)) {
                 return builder;
             }

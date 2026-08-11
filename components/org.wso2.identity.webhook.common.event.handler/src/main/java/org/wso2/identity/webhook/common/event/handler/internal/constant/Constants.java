@@ -56,6 +56,9 @@ public class Constants {
     public static final String ROLE_MANAGEMENT_EVENT_HOOK_NAME = "RoleManagementEventHook";
     public static final String ROLE_MANAGEMENT_EVENT_HOOK_ENABLED = "RoleManagementEventHook.enable";
 
+    public static final String ORGANIZATION_MANAGEMENT_EVENT_HOOK = "OrganizationManagementEventHook";
+    public static final String ORGANIZATION_MANAGEMENT_EVENT_HOOK_ENABLE = "OrganizationManagementEventHook.enable";
+
     public static final String SKIP_SIGNUP_CONFIRMATION_IF_ACCOUNT_LOCK_DISABLED =
             "Webhooks.Registration.SkipSignupConfirmationIfAccountLockDisabled";
 

@@ -51,6 +51,7 @@ public class Constants {
         public static final String CONSENT_CHANNEL = "https://schemas.identity.wso2.org/events/consent";
         public static final String CONSENT_PURPOSE_CHANNEL = "https://schemas.identity.wso2.org/events/consent-purpose";
         public static final String ROLE_MANAGEMENT_CHANNEL = "https://schemas.identity.wso2.org/events/role";
+        public static final String ORGANIZATION_MGT_CHANNEL = "https://schemas.identity.wso2.org/events/organization";
     }
 
     /**
@@ -96,6 +97,12 @@ public class Constants {
                 "https://schemas.identity.wso2.org/events/role/event-type/roleIdpGroupsUpdated";
         public static final String ROLE_PERMISSIONS_UPDATED_EVENT =
                 "https://schemas.identity.wso2.org/events/role/event-type/rolePermissionsUpdated";
+        public static final String POST_ORGANIZATION_CREATED_EVENT =
+                "https://schemas.identity.wso2.org/events/organization/event-type/organizationCreated";
+        public static final String POST_ORGANIZATION_UPDATED_EVENT =
+                "https://schemas.identity.wso2.org/events/organization/event-type/organizationUpdated";
+        public static final String POST_ORGANIZATION_DELETED_EVENT =
+                "https://schemas.identity.wso2.org/events/organization/event-type/organizationDeleted";
     }
 
     /**

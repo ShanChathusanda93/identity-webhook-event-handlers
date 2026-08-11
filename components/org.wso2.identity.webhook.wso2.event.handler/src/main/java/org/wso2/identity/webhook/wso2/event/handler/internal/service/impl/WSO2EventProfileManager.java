@@ -30,6 +30,7 @@ import static org.wso2.identity.webhook.common.event.handler.api.constants.Const
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.CONSENT_PURPOSE_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.CREDENTIAL_CHANGE_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.LOGIN_CHANNEL;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.ORGANIZATION_MGT_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.ROLE_MANAGEMENT_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.SESSION_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.TOKEN_CHANNEL;
@@ -55,6 +56,13 @@ import static org.wso2.identity.webhook.common.event.handler.api.constants.Const
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.ROLE_PERMISSIONS_UPDATED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.ROLE_META_UPDATED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.ROLE_USERS_UPDATED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_CREATED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_DELETED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_UPDATED_EVENT;
+import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_ADD_ORGANIZATION;
+import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_DELETE_ORGANIZATION;
+import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_PATCH_ORGANIZATION;
+import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_UPDATE_ORGANIZATION;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.SESSION_CREATED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.SESSION_PRESENTED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.SESSION_REVOKED_EVENT;
@@ -169,6 +177,16 @@ public class WSO2EventProfileManager implements EventProfileManager {
             } else if (IdentityEventConstants.Event.POST_UPDATE_PERMISSIONS_FOR_ROLE_V2_EVENT.equals(eventName)) {
                 channel = ROLE_MANAGEMENT_CHANNEL;
                 event = ROLE_PERMISSIONS_UPDATED_EVENT;
+            } else if (EVENT_POST_ADD_ORGANIZATION.equals(eventName)) {
+                channel = ORGANIZATION_MGT_CHANNEL;
+                event = POST_ORGANIZATION_CREATED_EVENT;
+            } else if (EVENT_POST_PATCH_ORGANIZATION.equals(eventName) ||
+                    EVENT_POST_UPDATE_ORGANIZATION.equals(eventName)) {
+                channel = ORGANIZATION_MGT_CHANNEL;
+                event = POST_ORGANIZATION_UPDATED_EVENT;
+            } else if (EVENT_POST_DELETE_ORGANIZATION.equals(eventName)) {
+                channel = ORGANIZATION_MGT_CHANNEL;
+                event = POST_ORGANIZATION_DELETED_EVENT;
             }
         }
         return EventMetadata.builder()

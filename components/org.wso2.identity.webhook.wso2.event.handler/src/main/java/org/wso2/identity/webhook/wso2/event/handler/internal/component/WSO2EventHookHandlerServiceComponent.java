@@ -35,6 +35,7 @@ import org.wso2.carbon.identity.organization.management.service.OrganizationMana
 import org.wso2.carbon.identity.role.v2.mgt.core.RoleManagementService;
 import org.wso2.carbon.idp.mgt.IdpManager;
 import org.wso2.carbon.user.core.service.RealmService;
+import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
@@ -44,6 +45,7 @@ import org.wso2.identity.webhook.common.event.handler.api.builder.RegistrationEv
 import org.wso2.identity.webhook.common.event.handler.api.builder.SessionEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.UserOperationEventPayloadBuilder;
 import org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2ConsentEventPayloadBuilder;
+import org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2OrganizationManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2ConsentPurposeEventPayloadBuilder;
 import org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2TokenEventPayloadBuilder;
@@ -96,6 +98,8 @@ public class WSO2EventHookHandlerServiceComponent {
                     new WSO2ConsentEventPayloadBuilder(), null);
             context.getBundleContext().registerService(RoleManagementEventPayloadBuilder.class.getName(),
                     new WSO2RoleManagementEventPayloadBuilder(), null);
+            context.getBundleContext().registerService(OrganizationManagementEventPayloadBuilder.class.getName(),
+                    new WSO2OrganizationManagementEventPayloadBuilder(), null);
         } catch (Exception e) {
             log.error("Error while activating event handler.", e);
         }

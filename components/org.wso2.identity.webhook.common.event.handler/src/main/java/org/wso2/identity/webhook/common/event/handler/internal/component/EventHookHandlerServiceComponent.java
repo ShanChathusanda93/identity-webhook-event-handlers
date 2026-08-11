@@ -43,6 +43,7 @@ import org.wso2.carbon.identity.topic.management.api.service.TopicManagementServ
 import org.wso2.carbon.identity.webhook.metadata.api.service.WebhookMetadataService;
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentPurposeEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
@@ -57,6 +58,7 @@ import org.wso2.identity.webhook.common.event.handler.internal.handler.ConsentEv
 import org.wso2.identity.webhook.common.event.handler.internal.handler.ConsentPurposeEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.CredentialEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.LoginEventHookHandler;
+import org.wso2.identity.webhook.common.event.handler.internal.handler.OrganizationManagementEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.RegistrationEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.RoleManagementEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.SessionEventHookHandler;
@@ -150,6 +152,15 @@ public class EventHookHandlerServiceComponent {
                     .equalsIgnoreCase(Boolean.TRUE.toString())) {
                 bundleContext.registerService(AbstractEventHandler.class.getName(),
                         new RoleManagementEventHookHandler(), null);
+            }
+
+            String isOrganizationMgtEventHandlerEnabled =
+                    getIdentityEventProperty(Constants.ORGANIZATION_MANAGEMENT_EVENT_HOOK,
+                            Constants.ORGANIZATION_MANAGEMENT_EVENT_HOOK_ENABLE);
+            if (isOrganizationMgtEventHandlerEnabled != null && isOrganizationMgtEventHandlerEnabled
+                    .equalsIgnoreCase(Boolean.TRUE.toString())) {
+                bundleContext.registerService(AbstractEventHandler.class.getName(),
+                        new OrganizationManagementEventHookHandler(), null);
             }
         } catch (IdentityEventServerException e) {
             log.error("Error while activating event handler.", e);
@@ -541,6 +552,31 @@ public class EventHookHandlerServiceComponent {
                 roleManagementEventPayloadBuilder.getEventSchemaType());
         EventHookHandlerDataHolder.getInstance()
                 .removeRoleManagementEventPayloadBuilder(roleManagementEventPayloadBuilder);
+    }
+
+    @Reference(
+            name = "organization.event.payload.builder",
+            service = OrganizationManagementEventPayloadBuilder.class,
+            cardinality = ReferenceCardinality.MULTIPLE,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "removeOrganizationEventPayloadBuilder"
+    )
+    protected void addOrganizationEventPayloadBuilder(
+            OrganizationManagementEventPayloadBuilder organizationManagementEventPayloadBuilder) {
+
+        log.debug("Add Organization Event Payload Builder service " +
+                organizationManagementEventPayloadBuilder.getEventSchemaType());
+        EventHookHandlerDataHolder.getInstance()
+                .addOrgManagementEventPayloadBuilder(organizationManagementEventPayloadBuilder);
+    }
+
+    protected void removeOrganizationEventPayloadBuilder(
+            OrganizationManagementEventPayloadBuilder organizationManagementEventPayloadBuilder) {
+
+        log.debug("Remove Organization Event Payload Builder service " +
+                organizationManagementEventPayloadBuilder.getEventSchemaType());
+        EventHookHandlerDataHolder.getInstance()
+                .removeOrgManagementEventPayloadBuilder(organizationManagementEventPayloadBuilder);
     }
 
     /**

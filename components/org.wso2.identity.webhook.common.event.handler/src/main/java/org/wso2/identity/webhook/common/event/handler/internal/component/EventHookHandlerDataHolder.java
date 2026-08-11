@@ -28,6 +28,7 @@ import org.wso2.carbon.identity.topic.management.api.service.TopicManagementServ
 import org.wso2.carbon.identity.webhook.metadata.api.service.WebhookMetadataService;
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentPurposeEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
@@ -66,6 +67,8 @@ public class EventHookHandlerDataHolder {
     private final List<ConsentPurposeEventPayloadBuilder> consentPurposeEventPayloadBuilders = new ArrayList<>();
     private final List<ConsentEventPayloadBuilder> consentEventPayloadBuilders = new ArrayList<>();
     private final List<RoleManagementEventPayloadBuilder> roleManagementEventPayloadBuilders = new ArrayList<>();
+    private final List<OrganizationManagementEventPayloadBuilder> organizationManagementEventPayloadBuilders =
+            new ArrayList<>();
 
     private EventHookHandlerDataHolder() {
 
@@ -509,5 +512,37 @@ public class EventHookHandlerDataHolder {
             RoleManagementEventPayloadBuilder roleManagementEventPayloadBuilder) {
 
         roleManagementEventPayloadBuilders.remove(roleManagementEventPayloadBuilder);
+    }
+
+    /**
+     * Get the list of organization management event payload builder implementations available.
+     *
+     * @return List of organization management event payload builder implementations.
+     */
+    public List<OrganizationManagementEventPayloadBuilder> getOrgManagementEventPayloadBuilders() {
+
+        return organizationManagementEventPayloadBuilders;
+    }
+
+    /**
+     * Add an organization management event payload builder implementation.
+     *
+     * @param organizationManagementEventPayloadBuilder Organization management event payload builder implementation.
+     */
+    public void addOrgManagementEventPayloadBuilder(
+            OrganizationManagementEventPayloadBuilder organizationManagementEventPayloadBuilder) {
+
+        organizationManagementEventPayloadBuilders.add(organizationManagementEventPayloadBuilder);
+    }
+
+    /**
+     * Remove an organization management event payload builder implementation.
+     *
+     * @param organizationManagementEventPayloadBuilder Organization management event payload builder implementation.
+     */
+    public void removeOrgManagementEventPayloadBuilder(
+            OrganizationManagementEventPayloadBuilder organizationManagementEventPayloadBuilder) {
+
+        organizationManagementEventPayloadBuilders.remove(organizationManagementEventPayloadBuilder);
     }
 }
