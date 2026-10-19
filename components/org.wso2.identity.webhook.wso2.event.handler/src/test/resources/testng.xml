@@ -22,6 +22,7 @@
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2LoginEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2UserOperationEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2SessionEventPayloadBuilderTest"/>
+            <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2TokenEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2CredentialEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2RegistrationEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.internal.service.impl.WSO2EventProfileManagerTest"/>

@@ -341,6 +341,7 @@ public class SessionEventHookHandlerTest {
                     .thenReturn(childOrganizationSubscriptionEnabled);
             utilsMocked.when(() -> EventHookHandlerUtils.isSubOrganizationLoginOfSharedApplication(context))
                     .thenCallRealMethod();
+            utilsMocked.when(() -> EventHookHandlerUtils.isFragmentApplication(any())).thenCallRealMethod();
 
             sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
         }
