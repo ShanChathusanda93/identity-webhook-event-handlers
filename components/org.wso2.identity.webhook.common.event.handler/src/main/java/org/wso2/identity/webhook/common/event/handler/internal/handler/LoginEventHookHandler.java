@@ -21,6 +21,9 @@ package org.wso2.identity.webhook.common.event.handler.internal.handler;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
+import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.application.authentication.framework.model.OrganizationLoginData;
 import org.wso2.carbon.identity.base.IdentityRuntimeException;
 import org.wso2.carbon.identity.core.bean.context.MessageContext;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
@@ -32,6 +35,8 @@ import org.wso2.carbon.identity.event.publisher.api.exception.EventPublisherExce
 import org.wso2.carbon.identity.event.publisher.api.model.EventContext;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayload;
+import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
+import org.wso2.carbon.identity.organization.management.service.util.OrganizationManagementUtil;
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
 import org.wso2.identity.webhook.common.event.handler.api.builder.LoginEventPayloadBuilder;
@@ -162,19 +167,121 @@ public class LoginEventHookHandler extends AbstractEventHandler {
             return;
         }
 
-        if (EventHookHandlerUtils.isB2BUserLogin(eventData.getAuthenticationContext())) {
+        AuthenticationContext authenticationContext = eventData.getAuthenticationContext();
+        if (!isOrganizationAwareLogin(authenticationContext)) {
+            if (EventHookHandlerUtils.isFederationBasedOrganizationLogin(authenticationContext)) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Login event is triggered for a federation based organization login. Skipping event " +
+                            "handling for login event profile: " + eventProfile.getProfile());
+                }
+                return;
+            }
+            publishEvent(authenticationContext.getLoginTenantDomain(), loginChannel, eventUri,
+                    eventProfile.getProfile(), payloadBuilder, eventData, event.getEventName());
+            return;
+        }
+        // A shared application login (when enhanced organization login is disabled) raises this event in the
+        // sub organization and in the owning organization. Only the latter event will be published.
+        if (isSubOrganizationLoginOfSharedApplication(authenticationContext)) {
             if (log.isDebugEnabled()) {
-                log.debug(
-                        "Login event is triggered for a B2B user federation. Skipping event handling for login event profile: " +
-                                eventProfile.getProfile());
+                log.debug("Login event is raised in the sub organization of a shared application login, " +
+                        "which is not published from there. Skipping login event profile: " +
+                        eventProfile.getProfile());
             }
             return;
         }
+        // The payload is built for the same organization the event is published to.
+        EventData publishingEventData = eventData.toBuilder()
+                .tenantDomain(resolvePublishingTenantDomain(eventData))
+                .build();
+        publishEvent(publishingEventData.getTenantDomain(), loginChannel, eventUri,
+                eventProfile.getProfile(), payloadBuilder, publishingEventData, event.getEventName());
+    }
 
-        // Publish for current accessing org
-        String tenantDomain = eventData.getAuthenticationContext().getLoginTenantDomain();
-        publishEvent(tenantDomain, loginChannel, eventUri, eventProfile.getProfile(),
-                payloadBuilder, eventData, event.getEventName());
+    /**
+     * Whether the login is handled the organization aware way, which needs child organization subscriptions enabled
+     * and a login that involves a sub organization. Every other login is handled as before.
+     *
+     * @param authenticationContext Context of the login.
+     * @return true if the login is handled the organization aware way.
+     */
+    private boolean isOrganizationAwareLogin(AuthenticationContext authenticationContext) {
+
+        if (!EventHookHandlerUtils.isChildOrganizationSubscriptionEnabled()) {
+            return false;
+        }
+        if (authenticationContext.getOrganizationLoginData() != null ||
+                EventHookHandlerUtils.isFederationBasedOrganizationLogin(authenticationContext)) {
+            return true;
+        }
+        try {
+            return OrganizationManagementUtil.isOrganization(authenticationContext.getLoginTenantDomain());
+        } catch (OrganizationManagementException e) {
+            log.warn("Error while checking whether the login tenant is an organization. The login is published " +
+                    "as one of a root organization.", e);
+            return false;
+        }
+    }
+
+    /**
+     * Whether the login came through the organization path of a sub organization, as the sub organization side of a
+     * shared application login does. Such a login is not published; the side of the owning organization is.
+     *
+     * @param authenticationContext Context of the login.
+     * @return true if the login came through the organization path.
+     */
+    private boolean isSubOrganizationLoginOfSharedApplication(AuthenticationContext authenticationContext) {
+
+        return authenticationContext.isOrgApplicationLogin() && !authenticationContext.isSharedAppLogin();
+    }
+
+    /**
+     * Tenant the login event is published to. The organization which a shared application or federation
+     * based organization login accessed. For every other login, the tenant it was performed in.
+     *
+     * @param eventData Data of the login event.
+     * @return Tenant domain to publish the event to.
+     */
+    private String resolvePublishingTenantDomain(EventData eventData) {
+
+        String accessedOrganizationTenantDomain = resolveAccessedOrganizationTenantDomain(eventData);
+        if (log.isDebugEnabled()) {
+            log.debug("Resolving the tenant to publish the login event to. Login tenant: " +
+                    eventData.getAuthenticationContext().getLoginTenantDomain() + ", accessed organization: " +
+                    accessedOrganizationTenantDomain);
+        }
+        return StringUtils.isNotBlank(accessedOrganizationTenantDomain) ? accessedOrganizationTenantDomain
+                : eventData.getAuthenticationContext().getLoginTenantDomain();
+    }
+
+    /**
+     * Tenant of the organization a login accessed: as the shared application login flow records it, or for a
+     * federation based organization login, as the authenticated usernames it. Null for every other login.
+     *
+     * @param eventData Data of the login event.
+     * @return Tenant domain of the accessed organization, or null when there is none or it cannot be resolved.
+     */
+    private String resolveAccessedOrganizationTenantDomain(EventData eventData) {
+
+        AuthenticationContext authenticationContext = eventData.getAuthenticationContext();
+        OrganizationLoginData organizationLoginData = authenticationContext.getOrganizationLoginData();
+        if (organizationLoginData != null && organizationLoginData.getAccessingOrganization() != null) {
+            return organizationLoginData.getAccessingOrganization().getHandle();
+        }
+        AuthenticatedUser authenticatedUser = eventData.getAuthenticatedUser();
+        if (!EventHookHandlerUtils.isFederationBasedOrganizationLogin(authenticationContext) ||
+                authenticatedUser == null || StringUtils.isBlank(authenticatedUser.getAccessingOrganization())) {
+            return null;
+        }
+        String accessingOrganization = authenticatedUser.getAccessingOrganization();
+        try {
+            return EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                    .resolveTenantDomain(accessingOrganization);
+        } catch (OrganizationManagementException e) {
+            log.warn("Error while resolving the tenant of the organization the user accessed: " +
+                    accessingOrganization + ". The login event is published to the login tenant.", e);
+            return null;
+        }
     }
 
     private void publishEvent(String tenantDomain, Channel loginChannel, String eventUri, String eventProfileName,

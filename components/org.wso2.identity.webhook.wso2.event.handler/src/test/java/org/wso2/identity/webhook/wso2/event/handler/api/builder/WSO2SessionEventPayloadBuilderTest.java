@@ -25,6 +25,7 @@ import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.wso2.carbon.identity.application.authentication.framework.UserSessionManagementService;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.ExternalIdPConfig;
@@ -58,6 +59,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2SessionCr
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2SessionPresentedEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2SessionRevokedEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.util.CommonTestUtils;
+import org.wso2.identity.webhook.wso2.event.handler.internal.util.WSO2PayloadUtils;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -67,6 +69,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
@@ -238,6 +241,63 @@ public class WSO2SessionEventPayloadBuilderTest {
         assertEquals(sessionCreatePayload.getSession().getApplications().size(), 1);
         assertEquals(sessionCreatePayload.getSession().getApplications().get(0).getId(), TEST_APP_ID);
         assertEquals(sessionCreatePayload.getSession().getApplications().get(0).getName(), TEST_APP_NAME);
+    }
+
+    @DataProvider(name = "organizationAwarePayloadDataProvider")
+    public Object[][] organizationAwarePayloadDataProvider() {
+
+        return new Object[][] {
+                {false},
+                {true}
+        };
+    }
+
+    @Test(dataProvider = "organizationAwarePayloadDataProvider")
+    public void testSessionEstablishedEventIsOrganizationAwareOnlyWhileEnabled(boolean organizationAware)
+            throws Exception {
+
+        String mainAppId = "main-app-id";
+        org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization applicationOrganization =
+                new org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization(
+                        "app-org-id", "app-org", "app-org", 0);
+        when(userSessionManagementService.getUserSessionBySessionId(TEST_SESSION_ID_1)).thenReturn(
+                Optional.of(getFirstMockUserSession()));
+        Map<String, Object> params = new HashMap<>();
+        params.put(EVENT_PARAM_KEY_SESSION_ID, TEST_SESSION_ID_1);
+        EventData eventData = new EventData.Builder()
+                .eventName(IdentityEventConstants.Event.SESSION_CREATE)
+                .authenticatedUser(mockAuthenticatedUser)
+                .authenticationContext(mockAuthenticationContext)
+                .sessionContext(mockSessionContext)
+                .tenantDomain(TEST_TENANT_DOMAIN)
+                .eventParams(params)
+                .build();
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Mockito.CALLS_REAL_METHODS)) {
+            payloadUtils.when(WSO2PayloadUtils::isOrganizationAwarePayloadEnabled).thenReturn(organizationAware);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveApplicationResourceId(anyString(), anyString()))
+                    .thenReturn(mainAppId);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildApplicationOrganization(
+                    any(AuthenticationContext.class), anyString())).thenReturn(applicationOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveApplicationOrganization(anyString(), anyString()))
+                    .thenReturn(applicationOrganization);
+
+            WSO2SessionCreatedEventPayload payload =
+                    (WSO2SessionCreatedEventPayload) payloadBuilder.buildSessionEstablishedEvent(eventData);
+
+            org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Application sessionApplication =
+                    payload.getSession().getApplications().get(0);
+            if (organizationAware) {
+                assertEquals(payload.getApplication().getId(), mainAppId);
+                assertEquals(payload.getApplication().getOrganization(), applicationOrganization);
+                assertEquals(sessionApplication.getOrganization(), applicationOrganization);
+            } else {
+                assertEquals(payload.getApplication().getId(), TEST_APP_ID);
+                assertNull(payload.getApplication().getOrganization());
+                assertNull(sessionApplication.getOrganization());
+            }
+        }
     }
 
     @Test

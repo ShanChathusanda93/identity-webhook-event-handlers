@@ -126,11 +126,13 @@ public class SessionEventHookHandler extends AbstractEventHandler {
             return;
         }
 
-        if (EventHookHandlerUtils.isB2BUserLogin(eventData.getAuthenticationContext())) {
+        // A session federated from a sub organization is published only while child organization subscriptions
+        // are enabled, as it was skipped before.
+        if (!EventHookHandlerUtils.isChildOrganizationSubscriptionEnabled() &&
+                EventHookHandlerUtils.isFederationBasedOrganizationLogin(eventData.getAuthenticationContext())) {
             if (log.isDebugEnabled()) {
-                log.debug(
-                        "Session event is triggered for a B2B user federation. Skipping event handling for login event profile: " +
-                                eventProfile.getProfile());
+                log.debug("Session event is triggered for a federation based organization login. Skipping event " +
+                        "handling for session event profile: " + eventProfile.getProfile());
             }
             return;
         }

@@ -230,6 +230,58 @@ public class SessionEventHookHandlerTest {
         }
     }
 
+    @DataProvider(name = "b2bUserLoginDataProvider")
+    public Object[][] b2bUserLoginDataProvider() {
+
+        return new Object[][] {
+                {false, 0},
+                {true, 1}
+        };
+    }
+
+    @Test(dataProvider = "b2bUserLoginDataProvider")
+    public void testHandleEventForB2BUserLogin(boolean childOrganizationSubscriptionEnabled, int expectedPublishes)
+            throws Exception {
+
+        String eventName = IdentityEventConstants.EventName.SESSION_CREATE.name();
+        String channelUri = "session/channel/uri";
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        Channel channel = new Channel("Session Channel", "Session Channel", channelUri,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("CAEP", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata eventMetadata =
+                mock(org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(channelUri);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        EventData eventData = mock(EventData.class);
+        AuthenticationContext context = createAuthenticationContext();
+        when(eventData.getAuthenticationContext()).thenReturn(context);
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getSessionEventPayloadBuilder(any()))
+                    .thenReturn(mockedSessionEventPayloadBuilder);
+            when(mockedSessionEventPayloadBuilder.buildSessionEstablishedEvent(any(EventData.class)))
+                    .thenReturn(mockedEventPayload);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString(), any()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled)
+                    .thenReturn(childOrganizationSubscriptionEnabled);
+            utilsMocked.when(() -> EventHookHandlerUtils.isFederationBasedOrganizationLogin(context)).thenReturn(true);
+
+            sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        }
+        verify(mockedEventPublisherService, times(expectedPublishes)).publish(any(), any());
+    }
+
     @Test
     public void testHandleEventWithNoProfiles() throws Exception {
 

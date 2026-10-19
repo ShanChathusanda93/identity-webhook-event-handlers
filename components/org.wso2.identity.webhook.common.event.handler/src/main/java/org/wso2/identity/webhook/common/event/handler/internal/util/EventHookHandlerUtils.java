@@ -38,6 +38,7 @@ import org.wso2.carbon.identity.core.URLBuilderException;
 import org.wso2.carbon.identity.core.context.IdentityContext;
 import org.wso2.carbon.identity.core.context.model.Organization;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
+import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
@@ -300,12 +301,35 @@ public class EventHookHandlerUtils {
     }
 
     /**
+     * Whether organizations can subscribe to the events of their child organizations. The organization aware
+     * handling of an event applies only while it is enabled; otherwise the event is handled as before.
+     *
+     * @return true if child organization subscriptions are enabled.
+     */
+    public static boolean isChildOrganizationSubscriptionEnabled() {
+
+        return IdentityUtil.isChildOrganizationSubscriptionEnabled();
+    }
+
+    /**
      * Checks if the user is a B2B user based on the authentication context.
      *
      * @param authContext Authentication context.
      * @return True if the user is a B2B user, otherwise false.
      */
+    @Deprecated
     public static boolean isB2BUserLogin(AuthenticationContext authContext) {
+
+        return isFederationBasedOrganizationLogin(authContext);
+    }
+
+    /**
+     * Checks if the shared application login is happening from federation based login.
+     *
+     * @param authContext Authentication context.
+     * @return True if the login is from federation based login, otherwise false.
+     */
+    public static boolean isFederationBasedOrganizationLogin(AuthenticationContext authContext) {
 
         if (authContext == null) {
             return false;
