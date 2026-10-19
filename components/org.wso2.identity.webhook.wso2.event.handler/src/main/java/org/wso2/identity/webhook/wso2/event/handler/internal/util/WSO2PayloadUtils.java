@@ -21,11 +21,15 @@ package org.wso2.identity.webhook.wso2.event.handler.internal.util;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.exception.UserIdNotFoundException;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.application.authentication.framework.model.OrganizationLoginData;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkUtils;
+import org.wso2.carbon.identity.application.common.IdentityApplicationManagementException;
 import org.wso2.carbon.identity.application.common.model.ClaimMapping;
+import org.wso2.carbon.identity.application.mgt.ApplicationManagementService;
 import org.wso2.carbon.identity.claim.metadata.mgt.ClaimMetadataManagementService;
 import org.wso2.carbon.identity.claim.metadata.mgt.exception.ClaimMetadataException;
 import org.wso2.carbon.identity.claim.metadata.mgt.model.LocalClaim;
@@ -39,6 +43,10 @@ import org.wso2.carbon.identity.core.context.util.IdentityContextUtil;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
+import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
+import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
+import org.wso2.carbon.identity.organization.management.service.model.MinimalOrganization;
+import org.wso2.carbon.identity.organization.management.service.util.OrganizationManagementUtil;
 import org.wso2.carbon.identity.organization.management.service.util.Utils;
 import org.wso2.carbon.user.api.RealmConfiguration;
 import org.wso2.carbon.user.api.UserRealm;
@@ -52,6 +60,7 @@ import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.wso2.event.handler.internal.component.WSO2EventHookHandlerDataHolder;
 import org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.SharedUserProfile;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.UserClaim;
@@ -80,6 +89,9 @@ import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Con
 public class WSO2PayloadUtils {
 
     private static final Log log = LogFactory.getLog(WSO2PayloadUtils.class);
+
+    // Tenant id the application management service returns for an application it does not find.
+    private static final int INVALID_TENANT_ID = -1;
 
     // Generic user based grant types that are typically associated with a user.
     private static final Set<String> USER_BASED_GRANT_TYPES = Set.of(
@@ -111,6 +123,21 @@ public class WSO2PayloadUtils {
             Optional<UserClaim> userNameClaimOptional = generateUserClaim(
                     USERNAME_CLAIM, authenticatedUser.getUserName(), authenticatedUser.getTenantDomain());
             userNameClaimOptional.ifPresent(user::addClaim);
+        }
+
+        if (authenticatedUser.isSharedUser()) {
+            String sharedUserTenantDomain = null;
+            try {
+                sharedUserTenantDomain = WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                        .resolveTenantDomain(authenticatedUser.getAccessingOrganization());
+            } catch (OrganizationManagementException e) {
+                log.warn(e.getMessage(), e);
+            }
+            String sharedUserRef = constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT,
+                    sharedUserTenantDomain) + "/" + authenticatedUser.getSharedUserId();
+            SharedUserProfile sharedUserProfile = new SharedUserProfile(authenticatedUser.getSharedUserId(),
+                    sharedUserRef);
+            user.setSharedUserProfile(sharedUserProfile);
         }
     }
 
@@ -179,6 +206,20 @@ public class WSO2PayloadUtils {
         user.setRef(constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT) + "/" + userId);
     }
 
+    /**
+     * Set the user's identifier and the reference to it.
+     *
+     * @param user         User to populate.
+     * @param userId       Identifier of the user.
+     * @param tenantDomain Tenant the user resides in, which decides whether the reference is addressed through the
+     *                     organization perspective. Null falls back to the organization on the thread.
+     */
+    public static void populateUserIdAndRef(User user, String userId, String tenantDomain) {
+
+        user.setId(userId);
+        user.setRef(constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT, tenantDomain) + "/" + userId);
+    }
+
     private static void handleClaim(User user, String claimUri, String claimValue, String tenantDomain) {
 
         switch (claimUri) {
@@ -201,10 +242,29 @@ public class WSO2PayloadUtils {
 
         try {
             user.setId(authenticatedUser.getUserId());
-            user.setRef(constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT) +
-                    "/" + authenticatedUser.getUserId());
+            if (!authenticatedUser.isSharedUser()) {
+                // The authenticated user carries the tenant it resides in, which is the organization the reference
+                // has to be addressed through.
+                user.setRef(constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT,
+                        authenticatedUser.getTenantDomain()) + "/" + authenticatedUser.getUserId());
+            }
         } catch (UserIdNotFoundException e) {
             //TODO: Need to verify when this exception is thrown and handle it accordingly
+            log.debug("Error while resolving user id.", e);
+        }
+    }
+
+    public static void populateUserIdAndRef(User user, AuthenticatedUser authenticatedUser, String tenantDomain) {
+
+        try {
+            user.setId(authenticatedUser.getUserId());
+            if (!authenticatedUser.isSharedUser()) {
+                // The authenticated user carries the tenant it resides in, which is the organization the reference
+                // has to be addressed through.
+                user.setRef(constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT, tenantDomain) + "/" +
+                        authenticatedUser.getUserId());
+            }
+        } catch (UserIdNotFoundException e) {
             log.debug("Error while resolving user id.", e);
         }
     }
@@ -367,7 +427,7 @@ public class WSO2PayloadUtils {
         if (userStoreManager != null) {
             String domainQualifiedUserName = userStoreDomain + "/" + userName;
             WSO2PayloadUtils.enrichUser(userStoreManager, domainQualifiedUserName, user, tenantDomain);
-            user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+            user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, tenantDomain) + "/" + user.getId());
         }
         return user;
     }
@@ -422,7 +482,7 @@ public class WSO2PayloadUtils {
 
             if (claims.containsKey(FrameworkConstants.USER_ID_CLAIM)) {
                 user.setId(claims.get(FrameworkConstants.USER_ID_CLAIM));
-                user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+                user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, tenantDomain) + "/" + user.getId());
             } else if (claims.containsKey(LOCATION_CLAIM)) {
                 user.setRef(claims.get(LOCATION_CLAIM));
                 // If the user ID is not set, try to extract it from the ref.
@@ -441,11 +501,23 @@ public class WSO2PayloadUtils {
 
     public static String constructFullURLWithEndpoint(String endpoint) {
 
+        return constructFullURLWithEndpoint(endpoint, null);
+    }
+
+    /**
+     * Full URL of an endpoint, addressed the way the tenant holding the resource is addressed.
+     *
+     * @param endpoint             Endpoint of the resource, such as /scim2/Users.
+     * @param resourceTenantDomain Tenant the resource resides in. Null falls back to the organization on the
+     *                             thread, which is the tenant the operation was performed in.
+     * @return Full URL of the endpoint.
+     */
+    public static String constructFullURLWithEndpoint(String endpoint, String resourceTenantDomain) {
+
         if (endpoint == null) {
             throw new IllegalArgumentException("Endpoint cannot be null.");
         }
-        endpoint = constructBaseURL() + endpoint;
-        return endpoint;
+        return constructBaseURL(resourceTenantDomain) + endpoint;
     }
 
     public static Organization buildOrganizationFromIdentityContext(IdentityContext identityContext) {
@@ -461,15 +533,252 @@ public class WSO2PayloadUtils {
         return null;
     }
 
-    private static String constructBaseURL() {
+    /**
+     * Organization owning an application of a sub organization event. For a shared application the
+     * organization of its main application, and for any other the organization it resides in.
+     *
+     * @param applicationResourceId Resource identifier of the application as the event records it.
+     * @param tenantDomain   Tenant the event belongs to.
+     * @return The owning organization, or null for an event of a root organization or when it cannot be
+     * resolved.
+     */
+    public static Organization resolveApplicationOrganization(String applicationResourceId, String tenantDomain) {
+
+        if (StringUtils.isBlank(applicationResourceId) || StringUtils.isBlank(tenantDomain) ||
+                !isOrganization(tenantDomain)) {
+            return null;
+        }
+        return resolveOwningOrganization(applicationResourceId);
+    }
+
+    /**
+     * Resource identifier naming the application of an event as the owning organization knows it: for a shared
+     * application of a sub organization, its main application's identifier; otherwise the one given.
+     *
+     * @param applicationResourceId Resource identifier the event carries.
+     * @param eventTenantDomain     Tenant the event belongs to.
+     * @return The main application's resource identifier, or the one given when the application is not shared,
+     * or it cannot be resolved.
+     */
+    public static String resolveApplicationResourceId(String applicationResourceId, String eventTenantDomain) {
+
+        if (StringUtils.isBlank(applicationResourceId) || !isOrganization(eventTenantDomain)) {
+            return applicationResourceId;
+        }
+        try {
+            ApplicationManagementService applicationManagementService =
+                    WSO2EventHookHandlerDataHolder.getInstance().getApplicationManagementService();
+            String mainApplicationId = applicationManagementService.getMainAppId(applicationResourceId);
+            // An application not shared from an ancestor is named by the identifier it already has.
+            return StringUtils.isBlank(mainApplicationId) ? applicationResourceId : mainApplicationId;
+        } catch (IdentityApplicationManagementException e) {
+            log.debug("Error while resolving the main application of: " + applicationResourceId, e);
+            return applicationResourceId;
+        }
+    }
+
+    private static Organization resolveOwningOrganization(String applicationResourceId) {
 
         try {
-            ServiceURLBuilder builder = ServiceURLBuilder.create();
-            return builder.build().getAbsolutePublicURL();
+            ApplicationManagementService applicationManagementService =
+                    WSO2EventHookHandlerDataHolder.getInstance().getApplicationManagementService();
+            String mainApplicationId = applicationManagementService.getMainAppId(applicationResourceId);
+            String owningApplicationId =
+                    StringUtils.isBlank(mainApplicationId) ? applicationResourceId : mainApplicationId;
+            int owningTenantId = applicationManagementService.getTenantIdByApp(owningApplicationId);
+            if (owningTenantId == INVALID_TENANT_ID) {
+                log.debug("No application found for: " + owningApplicationId + ". Its organization is not reported.");
+                return null;
+            }
+            return buildOrganizationFromTenantDomain(IdentityTenantUtil.getTenantDomain(owningTenantId));
+        } catch (IdentityApplicationManagementException e) {
+            log.debug("Error while resolving the organization owning application: " + applicationResourceId, e);
+            return null;
+        }
+    }
+
+    /**
+     * Organization owning the application a login was performed against, for an event of a sub organization.
+     * A shared application login names it as the tenant of its primary application; any other login, its own tenant.
+     *
+     * @param authenticationContext Context of the login.
+     * @param eventTenantDomain     Tenant the event belongs to.
+     * @return The organization owning the application, or null for an event of a root organization or when it
+     * cannot be resolved.
+     */
+    public static Organization buildApplicationOrganization(AuthenticationContext authenticationContext,
+                                                            String eventTenantDomain) {
+
+        if (authenticationContext == null || !isOrganization(eventTenantDomain)) {
+            return null;
+        }
+        String tenantDomain = authenticationContext.getTenantDomain();
+        OrganizationLoginData organizationLoginData = authenticationContext.getOrganizationLoginData();
+        if (organizationLoginData != null && organizationLoginData.getPrimaryAppData() != null &&
+                StringUtils.isNotBlank(organizationLoginData.getPrimaryAppData().getTenantDomain())) {
+            tenantDomain = organizationLoginData.getPrimaryAppData().getTenantDomain();
+        }
+        return buildOrganizationFromTenantDomain(tenantDomain);
+    }
+
+    /**
+     * Organization a tenant belongs to.
+     *
+     * @param tenantDomain Tenant to resolve.
+     * @return The organization, or null if it could not be resolved.
+     */
+    public static Organization buildOrganizationFromTenantDomain(String tenantDomain) {
+
+        if (StringUtils.isBlank(tenantDomain)) {
+            return null;
+        }
+        try {
+            String organizationId = WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                    .resolveOrganizationId(tenantDomain);
+            return buildOrganizationFromOrgId(organizationId, tenantDomain);
+        } catch (OrganizationManagementException e) {
+            log.debug("Error while resolving the organization of tenant: " + tenantDomain, e);
+            return null;
+        }
+    }
+
+    public static Organization buildOrganizationFromOrgId(String organizationId, String tenantDomain) {
+
+        if (StringUtils.isBlank(organizationId) || StringUtils.isBlank(tenantDomain)) {
+            return null;
+        }
+        try {
+            MinimalOrganization minimalOrganization = WSO2EventHookHandlerDataHolder.getInstance().
+                    getOrganizationManager().getMinimalOrganization(organizationId, tenantDomain);
+            if (minimalOrganization != null) {
+                return new Organization(
+                        minimalOrganization.getId(),
+                        minimalOrganization.getName(),
+                        minimalOrganization.getOrganizationHandle(),
+                        minimalOrganization.getDepth()
+                );
+            }
+        } catch (OrganizationManagementException e) {
+            log.error("Error while getting organization id from orgId " + organizationId, e);
+        }
+        return null;
+    }
+
+    /**
+     * Base URL of the resources a payload references, from the tenant a resource resides in: {@code /t/<root>/o}
+     * for a sub organization, whose identifier the token carries, and {@code /t/<tenant>} for a root organization.
+     *
+     * @param resourceTenantDomain Tenant the resource resides in, or null to fall back to the organization on
+     *                             the thread.
+     * @return Base URL, or null if it could not be built.
+     */
+    private static String constructBaseURL(String resourceTenantDomain) {
+
+        try {
+            String tenantDomain = StringUtils.isNotBlank(resourceTenantDomain)
+                    ? resourceTenantDomain : resolveTenantDomainFromContext();
+            if (StringUtils.isBlank(tenantDomain)) {
+                return ServiceURLBuilder.create().build().getAbsolutePublicURL();
+            }
+            if (!isOrganization(tenantDomain)) {
+                // A root organization is qualified by the URL builder, so the super tenant rules and the tenant
+                // qualified URL setting keep applying, and its resources are referenced as before.
+                return ServiceURLBuilder.create().setTenant(tenantDomain).build().getAbsolutePublicURL();
+            }
+            String rootTenantDomain = resolveRootTenantDomain(tenantDomain);
+            if (StringUtils.isBlank(rootTenantDomain)) {
+                // Without the root of the hierarchy the organization perspective cannot be addressed, so the
+                // URL builder is left to qualify the path as it did before.
+                return ServiceURLBuilder.create().build().getAbsolutePublicURL();
+            }
+            return buildAbsoluteURL("/t/" + rootTenantDomain + "/o");
         } catch (URLBuilderException e) {
             log.debug("Error occurred while building the tenant qualified URL.", e);
         }
         return null;
+    }
+
+    /**
+     * Build an absolute URL for a path that already carries the tenant or organization perspective. Such a path
+     * is used as given. The URL builder qualifies only a path that does not carry one.
+     */
+    private static String buildAbsoluteURL(String path) throws URLBuilderException {
+
+        return ServiceURLBuilder.create().addPath(path).build().getAbsolutePublicURL();
+    }
+
+    /**
+     * Tenant of the organization the operation was performed in, used when the resource does not say where it
+     * resides.
+     */
+    private static String resolveTenantDomainFromContext() {
+
+        IdentityContext identityContext = IdentityContext.getThreadLocalIdentityContext();
+        if (identityContext.getOrganization() != null &&
+                StringUtils.isNotBlank(identityContext.getOrganization().getOrganizationHandle())) {
+            return identityContext.getOrganization().getOrganizationHandle();
+        }
+        if (StringUtils.isNotBlank(identityContext.getTenantDomain())) {
+            return identityContext.getTenantDomain();
+        }
+        RootOrganization rootOrganization = identityContext.getRootOrganization();
+        return rootOrganization != null ? rootOrganization.getAssociatedTenantDomain() : null;
+    }
+
+    /**
+     * Whether the given tenant is a sub organization.
+     *
+     * @param tenantDomain Tenant to check.
+     * @return true if the tenant is a sub organization, false when it is a root tenant or cannot be told.
+     */
+    public static boolean isOrganization(String tenantDomain) {
+
+        try {
+            return OrganizationManagementUtil.isOrganization(tenantDomain);
+        } catch (OrganizationManagementException | RuntimeException e) {
+            log.debug("Error while checking whether tenant: " + tenantDomain + " is an organization.", e);
+            return false;
+        }
+    }
+
+    private static String resolveRootTenantDomain(String tenantDomain) {
+
+        String rootTenantDomain = resolveRootTenantDomainFromContext(tenantDomain);
+        if (StringUtils.isBlank(rootTenantDomain)) {
+            rootTenantDomain = resolveRootTenantDomainFromHierarchy(tenantDomain);
+        }
+        return rootTenantDomain;
+    }
+
+    private static String resolveRootTenantDomainFromContext(String tenantDomain) {
+
+        IdentityContext identityContext = IdentityContext.getThreadLocalIdentityContext();
+        RootOrganization rootOrganization = identityContext.getRootOrganization();
+        if (rootOrganization == null || StringUtils.isBlank(rootOrganization.getAssociatedTenantDomain())) {
+            return null;
+        }
+        if (identityContext.getOrganization() != null &&
+                StringUtils.equals(tenantDomain, identityContext.getOrganization().getOrganizationHandle())) {
+            return rootOrganization.getAssociatedTenantDomain();
+        }
+        return null;
+    }
+
+    private static String resolveRootTenantDomainFromHierarchy(String tenantDomain) {
+
+        try {
+            OrganizationManager organizationManager =
+                    WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager();
+            if (organizationManager == null) {
+                return null;
+            }
+            String organizationId = organizationManager.resolveOrganizationId(tenantDomain);
+            String rootOrganizationId = organizationManager.getPrimaryOrganizationId(organizationId);
+            return organizationManager.resolveTenantDomain(rootOrganizationId);
+        } catch (OrganizationManagementException e) {
+            log.debug("Error while resolving the root organization of tenant: " + tenantDomain, e);
+            return null;
+        }
     }
 
     /**
@@ -480,6 +789,20 @@ public class WSO2PayloadUtils {
      */
     public static String resolveUserStoreDomain(EventData eventData) {
 
+        return resolveUserStoreDomain(eventData, eventData != null ? eventData.getTenantDomain() : null);
+    }
+
+    /**
+     * Resolves the user store domain from the event data, falling back to the primary user store of the given
+     * tenant.
+     *
+     * @param eventData    The event data containing user store information.
+     * @param tenantDomain Tenant whose user store to fall back to, which is the tenant the user resides in rather
+     *                     than the tenant of the event when the two differ.
+     * @return The user store domain name or null if not found.
+     */
+    public static String resolveUserStoreDomain(EventData eventData, String tenantDomain) {
+
         if (eventData == null || eventData.getProperties() == null) {
             return null;
         }
@@ -489,8 +812,7 @@ public class WSO2PayloadUtils {
         String userStoreDomainName = (userStoreDomainObj instanceof String) ? (String) userStoreDomainObj : null;
 
         if (StringUtils.isBlank(userStoreDomainName)) {
-            RealmConfiguration realmConfiguration =
-                    getRealmConfigurationByTenantDomain(eventData.getTenantDomain());
+            RealmConfiguration realmConfiguration = getRealmConfigurationByTenantDomain(tenantDomain);
             if (realmConfiguration == null) {
                 return null;
             }
@@ -508,8 +830,22 @@ public class WSO2PayloadUtils {
      */
     public static UserStore buildUserStore(EventData eventData) {
 
-        String userStoreDomainName = resolveUserStoreDomain(eventData);
-        if (userStoreDomainName == null) return null;
+        return buildUserStore(eventData, eventData != null ? eventData.getTenantDomain() : null);
+    }
+
+    /**
+     * Builds a UserStore object, resolving the user store of the given tenant when the event carries none.
+     *
+     * @param eventData    The event data containing user store information.
+     * @param tenantDomain Tenant the user resides in.
+     * @return UserStore object or null if the user store domain is not found.
+     */
+    public static UserStore buildUserStore(EventData eventData, String tenantDomain) {
+
+        String userStoreDomainName = resolveUserStoreDomain(eventData, tenantDomain);
+        if (userStoreDomainName == null) {
+            return null;
+        }
 
         if (StringUtils.isNotBlank(userStoreDomainName)) {
             return new UserStore(userStoreDomainName);
@@ -526,6 +862,20 @@ public class WSO2PayloadUtils {
      */
     public static User buildUser(EventData eventData) {
 
+        return buildUser(eventData, eventData != null ? eventData.getTenantDomain() : null);
+    }
+
+    /**
+     * Builds a User object based on the event data, reading the user from the given tenant.
+     *
+     * @param eventData    The event data containing user information.
+     * @param tenantDomain Tenant the user resides in, which is the tenant its claims are read from and the
+     *                     organization its reference is addressed through. It is the tenant of the event only
+     *                     when the user resides in the organization the event belongs to.
+     * @return User object or null if user information is not available.
+     */
+    public static User buildUser(EventData eventData, String tenantDomain) {
+
         if (eventData == null || eventData.getProperties() == null) {
             return null;
         }
@@ -538,10 +888,10 @@ public class WSO2PayloadUtils {
 
         User user = new User();
         user.setId(eventData.getUserId());
-        user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+        user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, tenantDomain) + "/" + user.getId());
 
-        String userStoreDomain = resolveUserStoreDomain(eventData);
-        UserStoreManager userStoreManager = getUserStoreManagerByTenantDomain(eventData.getTenantDomain());
+        String userStoreDomain = resolveUserStoreDomain(eventData, tenantDomain);
+        UserStoreManager userStoreManager = getUserStoreManagerByTenantDomain(tenantDomain);
 
         if (userStoreDomain == null || userStoreManager == null) {
             return user;
@@ -556,23 +906,20 @@ public class WSO2PayloadUtils {
                                 UserCoreConstants.DEFAULT_PROFILE);
                 user.setId(userId);
             }
-            user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+            user.setRef(constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, tenantDomain) + "/" + user.getId());
 
             String emailAddress =
                     userStoreManager.getUserClaimValue(domainQualifiedUserName, FrameworkConstants.EMAIL_ADDRESS_CLAIM,
                             UserCoreConstants.DEFAULT_PROFILE);
 
             Optional<UserClaim> emailAddressUserClaimOptional =
-                    generateUserClaim(FrameworkConstants.EMAIL_ADDRESS_CLAIM, emailAddress,
-                            eventData.getTenantDomain());
+                    generateUserClaim(FrameworkConstants.EMAIL_ADDRESS_CLAIM, emailAddress, tenantDomain);
             emailAddressUserClaimOptional.ifPresent(user::addClaim);
         } catch (UserStoreException e) {
             log.debug("Error while extracting user claims for the user : " + user.getId(), e);
         }
 
-        Optional<UserClaim>
-                userNameOptional = generateUserClaim(USERNAME_CLAIM, userName,
-                eventData.getTenantDomain());
+        Optional<UserClaim> userNameOptional = generateUserClaim(USERNAME_CLAIM, userName, tenantDomain);
         userNameOptional.ifPresent(user::addClaim);
 
         return user;

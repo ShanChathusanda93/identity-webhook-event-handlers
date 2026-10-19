@@ -116,6 +116,27 @@ public class EventData {
     }
 
     /**
+     * Builder carrying the values of this event data, for deriving a copy with some of them changed.
+     * The model is immutable, so a value resolved later is applied to a new instance instead.
+     *
+     * @return Builder holding the current values.
+     */
+    public Builder toBuilder() {
+
+        return new Builder()
+                .eventName(this.eventName)
+                .request(this.request)
+                .eventParams(this.eventParams)
+                .authenticationContext(this.authenticationContext)
+                .authenticatorStatus(this.authenticatorStatus)
+                .authenticatedUser(this.authenticatedUser)
+                .sessionContext(this.sessionContext)
+                .userId(this.userId)
+                .tenantDomain(this.tenantDomain)
+                .properties(this.properties);
+    }
+
+    /**
      * Builder class to build EventData.
      */
     public static class Builder {
