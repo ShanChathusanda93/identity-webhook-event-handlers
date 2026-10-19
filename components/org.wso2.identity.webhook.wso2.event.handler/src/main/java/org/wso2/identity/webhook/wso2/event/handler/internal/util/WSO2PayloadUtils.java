@@ -675,4 +675,22 @@ public class WSO2PayloadUtils {
         return Boolean.parseBoolean(String.valueOf(
                 eventData.getProperties().get(IdentityEventConstants.EventProperty.IS_FEDERATED_USER)));
     }
+
+    /**
+     * Organization owning the application of an event, given the application's own tenant. Only an event of a
+     * sub organization carries it.
+     *
+     * @param applicationTenantDomain Tenant the application resides in.
+     * @param eventTenantDomain       Tenant the event belongs to.
+     * @return The organization owning the application, or null for an event of a root organization or when it
+     * cannot be resolved.
+     */
+    public static Organization buildApplicationOrganization(String applicationTenantDomain,
+                                                            String eventTenantDomain) {
+
+        if (!isOrganization(eventTenantDomain)) {
+            return null;
+        }
+        return buildOrganizationFromTenantDomain(applicationTenantDomain);
+    }
 }
