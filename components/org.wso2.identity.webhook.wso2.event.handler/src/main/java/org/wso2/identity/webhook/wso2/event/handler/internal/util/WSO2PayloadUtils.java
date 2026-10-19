@@ -41,6 +41,7 @@ import org.wso2.carbon.identity.core.context.model.Flow;
 import org.wso2.carbon.identity.core.context.model.RootOrganization;
 import org.wso2.carbon.identity.core.context.util.IdentityContextUtil;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
+import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
@@ -947,6 +948,104 @@ public class WSO2PayloadUtils {
         String rootTenantDomain = String.valueOf(rootOrganization.getAssociatedTenantDomain());
 
         return new Tenant(rootTenantId, rootTenantDomain);
+    }
+
+    /**
+     * Whether payloads are built organization aware, which applies only while organizations can subscribe to the
+     * events of their child organizations. Otherwise payloads are built as before.
+     *
+     * @return true if payloads are built organization aware.
+     */
+    public static boolean isOrganizationAwarePayloadEnabled() {
+
+        return IdentityUtil.isChildOrganizationSubscriptionEnabled();
+    }
+
+    /**
+     * Root organization of the tenant an event is raised in, as the identity context of the request names it.
+     * An event raised outside a request, such as from a background task, has no context, so it is resolved instead.
+     *
+     * @param eventTenantDomain Tenant domain the event is raised in.
+     * @return The root organization as a tenant, or null when it cannot be resolved.
+     */
+    public static Tenant resolveRootTenant(String eventTenantDomain) {
+
+        if (IdentityContext.getThreadLocalIdentityContext().getRootOrganization() != null) {
+            return buildTenant();
+        }
+        if (StringUtils.isBlank(eventTenantDomain)) {
+            log.debug("Neither the identity context nor the event names a tenant. The tenant is not reported.");
+            return null;
+        }
+        try {
+            String rootTenantDomain = eventTenantDomain;
+            if (OrganizationManagementUtil.isOrganization(eventTenantDomain)) {
+                OrganizationManager organizationManager =
+                        WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager();
+                String primaryOrganizationId = organizationManager.getPrimaryOrganizationId(
+                        organizationManager.resolveOrganizationId(eventTenantDomain));
+                rootTenantDomain = organizationManager.resolveTenantDomain(primaryOrganizationId);
+            }
+            return new Tenant(String.valueOf(IdentityTenantUtil.getTenantId(rootTenantDomain)), rootTenantDomain);
+        } catch (OrganizationManagementException e) {
+            // Runs per event, so a persistent failure logs its stack trace only while debugging.
+            log.warn("Could not resolve the root organization of tenant: " + eventTenantDomain + ": " +
+                    e.getMessage() + ". The tenant is not reported.");
+            if (log.isDebugEnabled()) {
+                log.debug("Root organization resolution failure for tenant: " + eventTenantDomain, e);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Organization an event belongs to, from the tenant of the event rather than the organization on the thread,
+     * which for a shared application login is the owning organization instead of the one logged in to.
+     *
+     * @param tenantDomain Tenant the event belongs to.
+     * @return The organization, or the organization on the thread when the tenant cannot be resolved.
+     */
+    public static Organization resolveEventOrganization(String tenantDomain) {
+
+        Organization organization = buildOrganizationFromTenantDomain(tenantDomain);
+        return organization != null ? organization
+                : buildOrganizationFromIdentityContext(IdentityContext.getThreadLocalIdentityContext());
+    }
+
+    /**
+     * Tenant of the organization a user resides in, which for a shared user is the organization it was shared from.
+     *
+     * @param authenticatedUser User to resolve.
+     * @return Tenant domain, or null when the user does not name its organization or it cannot be resolved.
+     */
+    public static String resolveUserResidentTenantDomain(AuthenticatedUser authenticatedUser) {
+
+        if (authenticatedUser == null || StringUtils.isBlank(authenticatedUser.getUserResidentOrganization())) {
+            return null;
+        }
+        try {
+            return WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                    .resolveTenantDomain(authenticatedUser.getUserResidentOrganization());
+        } catch (OrganizationManagementException e) {
+            log.debug("Error while resolving the tenant of the organization the user resides in: " +
+                    authenticatedUser.getUserResidentOrganization(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Organization a user resides in, which for a shared user is the organization it was shared from.
+     *
+     * @param authenticatedUser User to resolve.
+     * @return The organization, or null when the user does not name it or it cannot be resolved.
+     */
+    public static Organization buildUserResidentOrganization(AuthenticatedUser authenticatedUser) {
+
+        if (authenticatedUser == null || StringUtils.isBlank(authenticatedUser.getUserResidentOrganization())) {
+            return null;
+        }
+        return buildOrganizationFromOrgId(authenticatedUser.getUserResidentOrganization(),
+                resolveUserResidentTenantDomain(authenticatedUser));
     }
 
     /**

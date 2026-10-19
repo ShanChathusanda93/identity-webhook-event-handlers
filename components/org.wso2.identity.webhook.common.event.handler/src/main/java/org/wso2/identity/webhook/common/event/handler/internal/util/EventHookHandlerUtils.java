@@ -25,19 +25,23 @@ import org.slf4j.MDC;
 import org.wso2.carbon.context.PrivilegedCarbonContext;
 import org.wso2.carbon.identity.application.authentication.framework.AuthenticatorStatus;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.AuthenticatorConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.SequenceConfig;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.SessionContext;
 import org.wso2.carbon.identity.application.authentication.framework.exception.UserIdNotFoundException;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedIdPData;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.application.authentication.framework.model.OrganizationLoginData;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.application.common.model.Claim;
 import org.wso2.carbon.identity.application.common.model.ClaimMapping;
+import org.wso2.carbon.identity.application.common.model.ServiceProvider;
 import org.wso2.carbon.identity.core.ServiceURLBuilder;
 import org.wso2.carbon.identity.core.URLBuilderException;
 import org.wso2.carbon.identity.core.context.IdentityContext;
 import org.wso2.carbon.identity.core.context.model.Organization;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
+import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
@@ -46,12 +50,14 @@ import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayl
 import org.wso2.carbon.identity.event.publisher.api.model.common.ComplexSubject;
 import org.wso2.carbon.identity.event.publisher.api.model.common.SimpleSubject;
 import org.wso2.carbon.identity.event.publisher.api.model.common.Subject;
+import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
 import org.wso2.identity.webhook.common.event.handler.internal.component.EventHookHandlerDataHolder;
 import org.wso2.identity.webhook.common.event.handler.internal.constant.Constants;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -59,6 +65,7 @@ import java.util.UUID;
 import javax.servlet.http.HttpServletRequest;
 
 import static org.wso2.carbon.identity.application.authentication.framework.util.FrameworkUtils.CORRELATION_ID_MDC;
+import static org.wso2.carbon.identity.application.mgt.ApplicationConstants.IS_FRAGMENT_APP;
 
 /**
  * Utility class for Event Handler Hooks.
@@ -300,12 +307,36 @@ public class EventHookHandlerUtils {
     }
 
     /**
+     * Whether organizations can subscribe to the events of their child organizations. The organization aware
+     * handling of an event applies only while it is enabled; otherwise the event is handled as before.
+     *
+     * @return true if child organization subscriptions are enabled.
+     */
+    public static boolean isChildOrganizationSubscriptionEnabled() {
+
+        return IdentityUtil.isChildOrganizationSubscriptionEnabled();
+    }
+
+    /**
      * Checks if the user is a B2B user based on the authentication context.
      *
      * @param authContext Authentication context.
      * @return True if the user is a B2B user, otherwise false.
+     * @deprecated Use {@link #isFederationBasedOrganizationLogin(AuthenticationContext)} instead.
      */
+    @Deprecated
     public static boolean isB2BUserLogin(AuthenticationContext authContext) {
+
+        return isFederationBasedOrganizationLogin(authContext);
+    }
+
+    /**
+     * Checks if the shared application login is happening from federation based login.
+     *
+     * @param authContext Authentication context.
+     * @return True if the login is from federation based login, otherwise false.
+     */
+    public static boolean isFederationBasedOrganizationLogin(AuthenticationContext authContext) {
 
         if (authContext == null) {
             return false;
@@ -326,6 +357,74 @@ public class EventHookHandlerUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Tenant of the organization a login accessed: as the shared application login flow records it, or for a
+     * federation based organization login, as the authenticated user names it. Null for every other login.
+     *
+     * @param eventData Data of the login or session event.
+     * @return Tenant domain of the accessed organization, or null when there is none or it cannot be resolved.
+     */
+    public static String resolveAccessedOrganizationTenantDomain(EventData eventData) {
+
+        AuthenticationContext authenticationContext = eventData.getAuthenticationContext();
+        if (authenticationContext == null) {
+            return null;
+        }
+        OrganizationLoginData organizationLoginData = authenticationContext.getOrganizationLoginData();
+        if (organizationLoginData != null && organizationLoginData.getAccessingOrganization() != null) {
+            return organizationLoginData.getAccessingOrganization().getHandle();
+        }
+        return isFederationBasedOrganizationLogin(authenticationContext)
+                ? resolveUserAccessingOrganizationTenantDomain(eventData.getAuthenticatedUser()) : null;
+    }
+
+    /**
+     * Tenant of the organization a user accessed, as the authenticated user names it.
+     *
+     * @param authenticatedUser Authenticated user, or null if the event does not carry one.
+     * @return Tenant domain of the accessed organization, or null when the user names none or it cannot be resolved.
+     */
+    public static String resolveUserAccessingOrganizationTenantDomain(AuthenticatedUser authenticatedUser) {
+
+        if (authenticatedUser == null || StringUtils.isBlank(authenticatedUser.getAccessingOrganization())) {
+            return null;
+        }
+        String accessingOrganization = authenticatedUser.getAccessingOrganization();
+        try {
+            return EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                    .resolveTenantDomain(accessingOrganization);
+        } catch (OrganizationManagementException e) {
+            // Runs per event, so a persistent failure logs its stack trace only while debugging.
+            log.warn("Could not resolve the tenant of the organization the user accessed: " + accessingOrganization +
+                    ": " + e.getMessage() + ". The event is not published to that organization.");
+            if (log.isDebugEnabled()) {
+                log.debug("Accessed organization resolution failure for: " + accessingOrganization, e);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Whether a login is the sub organization side of a shared application login when enhanced organization login
+     * is disabled. A direct login through the tenant qualified organization path is not.
+     *
+     * @param authenticationContext Context of the login.
+     * @return true if the login is the sub organization side of a shared application login.
+     */
+    public static boolean isSubOrganizationLoginOfSharedApplication(AuthenticationContext authenticationContext) {
+
+        if (authenticationContext == null || authenticationContext.isSharedAppLogin() ||
+                authenticationContext.isOrgApplicationLogin()) {
+            return false;
+        }
+        SequenceConfig sequenceConfig = authenticationContext.getSequenceConfig();
+        ServiceProvider serviceProvider = sequenceConfig != null && sequenceConfig.getApplicationConfig() != null ?
+                sequenceConfig.getApplicationConfig().getServiceProvider() : null;
+        return serviceProvider != null && serviceProvider.getSpProperties() != null &&
+                Arrays.stream(serviceProvider.getSpProperties()).anyMatch(property ->
+                        IS_FRAGMENT_APP.equals(property.getName()) && Boolean.parseBoolean(property.getValue()));
     }
 
     private static Map<String, Object> validateAndGetProperties(Event event) throws IdentityEventException {

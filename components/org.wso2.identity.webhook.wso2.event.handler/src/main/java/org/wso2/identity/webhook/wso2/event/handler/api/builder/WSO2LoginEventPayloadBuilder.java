@@ -18,6 +18,8 @@
 package org.wso2.identity.webhook.wso2.event.handler.api.builder;
 
 import org.apache.commons.lang.StringUtils;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.SequenceConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.StepConfig;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthHistory;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
@@ -65,26 +67,32 @@ public class WSO2LoginEventPayloadBuilder implements LoginEventPayloadBuilder {
         }
 
         User user = new User();
+        boolean organizationAware = WSO2PayloadUtils.isOrganizationAwarePayloadEnabled();
         WSO2PayloadUtils.populateUserClaims(user, authenticatedUser, eventData.getTenantDomain());
-        WSO2PayloadUtils.populateUserIdAndRef(user, authenticatedUser);
+        if (organizationAware) {
+            WSO2PayloadUtils.populateUserIdAndRef(user, authenticatedUser, eventData.getTenantDomain());
+        } else {
+            WSO2PayloadUtils.populateUserIdAndRef(user, authenticatedUser);
+        }
 
-        String rootTenantId = String.valueOf(
-                IdentityContext.getThreadLocalIdentityContext().getRootOrganization().getAssociatedTenantId());
-        String rootTenantDomain = String.valueOf(
-                IdentityContext.getThreadLocalIdentityContext().getRootOrganization().getAssociatedTenantDomain());
+        Tenant tenant = WSO2PayloadUtils.resolveRootTenant(eventData.getTenantDomain());
 
-        Tenant tenant = new Tenant(rootTenantId, rootTenantDomain);
         UserStore userStore = null;
         if (authenticatedUser.getUserStoreDomain() != null) {
             userStore = new UserStore(authenticatedUser.getUserStoreDomain());
         }
-        Organization organization = WSO2PayloadUtils.buildOrganizationFromIdentityContext(
-                IdentityContext.getThreadLocalIdentityContext());
-        user.setOrganization(organization);
-        Application application = new Application.Builder()
-                .id(authenticationContext.getServiceProviderResourceId())
-                .name(authenticationContext.getServiceProviderName())
-                .build();
+        // Organization which the login was performed in.
+        Organization organization = resolveOrganization(eventData.getTenantDomain(), organizationAware);
+        Organization userOrganization;
+        if (organizationAware && authenticatedUser.isSharedUser()) {
+            // A shared user resides in the organization it was shared from.
+            userOrganization = WSO2PayloadUtils.buildUserResidentOrganization(authenticatedUser);
+        } else {
+            userOrganization = organization;
+        }
+        user.setOrganization(userOrganization);
+        Application application = buildApplication(authenticationContext, eventData.getTenantDomain(),
+                organizationAware);
 
         Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
         String action = WSO2PayloadUtils.getFlowAction(flow);
@@ -134,19 +142,20 @@ public class WSO2LoginEventPayloadBuilder implements LoginEventPayloadBuilder {
                 usernameClaimOptional.ifPresent(user::addClaim);
             }
         }
-        String rootTenantId = String.valueOf(
-                IdentityContext.getThreadLocalIdentityContext().getRootOrganization().getAssociatedTenantId());
-        String rootTenantDomain = String.valueOf(
-                IdentityContext.getThreadLocalIdentityContext().getRootOrganization().getAssociatedTenantDomain());
+        Tenant tenant = WSO2PayloadUtils.resolveRootTenant(eventData.getTenantDomain());
 
-        Tenant tenant = new Tenant(rootTenantId, rootTenantDomain);
-        Application application = new Application.Builder()
-                .id(authenticationContext.getServiceProviderResourceId())
-                .name(authenticationContext.getServiceProviderName())
-                .build();
-        Organization organization = WSO2PayloadUtils.buildOrganizationFromIdentityContext(
-                IdentityContext.getThreadLocalIdentityContext());
-        user.setOrganization(organization);
+        boolean organizationAware = WSO2PayloadUtils.isOrganizationAwarePayloadEnabled();
+        Application application =
+                buildApplication(authenticationContext, eventData.getTenantDomain(), organizationAware);
+        Organization organization = resolveOrganization(eventData.getTenantDomain(), organizationAware);
+        AuthenticatedUser sharedUser = organizationAware ? resolveSharedUser(authenticationContext) : null;
+        if (sharedUser != null && StringUtils.isNotBlank(sharedUser.getUserResidentOrganization())) {
+            // A shared user resides in the organization it was shared from.
+            user.setOrganization(WSO2PayloadUtils.buildUserResidentOrganization(sharedUser));
+        } else if (!organizationAware || !isSharedUserIdentifierLogin(authenticationContext)) {
+            // The user is in the event's organization, unless the shared user it names was never found.
+            user.setOrganization(organization);
+        }
 
         Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
         String action = WSO2PayloadUtils.getFlowAction(flow);
@@ -170,6 +179,51 @@ public class WSO2LoginEventPayloadBuilder implements LoginEventPayloadBuilder {
     public org.wso2.identity.webhook.common.event.handler.api.constants.Constants.EventSchema getEventSchemaType() {
 
         return org.wso2.identity.webhook.common.event.handler.api.constants.Constants.EventSchema.WSO2;
+    }
+
+    /**
+     * Shared user a failed login identified, either as its subject or in a step completed before the failure.
+     * A step failing after the user was identified leaves the subject unset, so the completed steps are checked too.
+     *
+     * @param authenticationContext Context of the login.
+     * @return The shared user, or null when the login did not identify one.
+     */
+    private AuthenticatedUser resolveSharedUser(AuthenticationContext authenticationContext) {
+
+        AuthenticatedUser subject = authenticationContext.getSubject();
+        if (subject != null && subject.isSharedUser()) {
+            return subject;
+        }
+        SequenceConfig sequenceConfig = authenticationContext.getSequenceConfig();
+        if (sequenceConfig == null || sequenceConfig.getStepMap() == null) {
+            return null;
+        }
+        return sequenceConfig.getStepMap().values().stream()
+                .map(StepConfig::getAuthenticatedUser)
+                .filter(stepUser -> stepUser != null && stepUser.isSharedUser())
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Whether the login identifies the user as a shared user, through the shared user identifier.
+     * The identifier passes an unknown username on, so its step may complete without a shared user.
+     *
+     * @param authenticationContext Context of the login.
+     * @return true if the shared user identifier took part in the login.
+     */
+    private boolean isSharedUserIdentifierLogin(AuthenticationContext authenticationContext) {
+
+        SequenceConfig sequenceConfig = authenticationContext.getSequenceConfig();
+        if (sequenceConfig != null && sequenceConfig.getStepMap() != null &&
+                sequenceConfig.getStepMap().values().stream().anyMatch(step ->
+                        step.getAuthenticatedAutenticator() != null && FrameworkConstants.SHARED_USER_IDENTIFIER_HANDLER
+                                .equals(step.getAuthenticatedAutenticator().getName()))) {
+            return true;
+        }
+        List<AuthHistory> stepHistory = authenticationContext.getAuthenticationStepHistory();
+        return stepHistory != null && stepHistory.stream().anyMatch(history ->
+                FrameworkConstants.SHARED_USER_IDENTIFIER_HANDLER.equals(history.getAuthenticatorName()));
     }
 
     private List<String> buildAuthMethods(AuthenticationContext authContext) {
@@ -214,5 +268,39 @@ public class WSO2LoginEventPayloadBuilder implements LoginEventPayloadBuilder {
             return dataMap.get(Constants.AUTHENTICATION_ERROR_MESSAGE);
         }
         return null;
+    }
+
+    /**
+     * Organization of a login event. An organization aware payload resolves it from the tenant of the event, which
+     * for a shared application login differs from the organization on the thread.
+     */
+    private Organization resolveOrganization(String eventTenantDomain, boolean organizationAware) {
+
+        if (!organizationAware) {
+            return WSO2PayloadUtils.buildOrganizationFromIdentityContext(
+                    IdentityContext.getThreadLocalIdentityContext());
+        }
+        return WSO2PayloadUtils.resolveEventOrganization(eventTenantDomain);
+    }
+
+    /**
+     * Application of a login event. An organization aware payload names a shared application by its main application
+     * and adds the organization owning it.
+     */
+    private Application buildApplication(AuthenticationContext authenticationContext, String eventTenantDomain,
+                                         boolean organizationAware) {
+
+        if (!organizationAware) {
+            return new Application.Builder()
+                    .id(authenticationContext.getServiceProviderResourceId())
+                    .name(authenticationContext.getServiceProviderName())
+                    .build();
+        }
+        return new Application.Builder()
+                .id(WSO2PayloadUtils.resolveApplicationResourceId(
+                        authenticationContext.getServiceProviderResourceId(), eventTenantDomain))
+                .name(authenticationContext.getServiceProviderName())
+                .organization(WSO2PayloadUtils.buildApplicationOrganization(authenticationContext, eventTenantDomain))
+                .build();
     }
 }
