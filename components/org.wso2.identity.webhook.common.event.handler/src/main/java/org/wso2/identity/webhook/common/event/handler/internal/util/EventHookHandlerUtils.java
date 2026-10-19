@@ -422,6 +422,17 @@ public class EventHookHandlerUtils {
         SequenceConfig sequenceConfig = authenticationContext.getSequenceConfig();
         ServiceProvider serviceProvider = sequenceConfig != null && sequenceConfig.getApplicationConfig() != null ?
                 sequenceConfig.getApplicationConfig().getServiceProvider() : null;
+        return isFragmentApplication(serviceProvider);
+    }
+
+    /**
+     * Whether an application is a fragment, the copy of an application shared into a sub organization.
+     *
+     * @param serviceProvider Application to check.
+     * @return true if the application is a fragment.
+     */
+    public static boolean isFragmentApplication(ServiceProvider serviceProvider) {
+
         return serviceProvider != null && serviceProvider.getSpProperties() != null &&
                 Arrays.stream(serviceProvider.getSpProperties()).anyMatch(property ->
                         IS_FRAGMENT_APP.equals(property.getName()) && Boolean.parseBoolean(property.getValue()));

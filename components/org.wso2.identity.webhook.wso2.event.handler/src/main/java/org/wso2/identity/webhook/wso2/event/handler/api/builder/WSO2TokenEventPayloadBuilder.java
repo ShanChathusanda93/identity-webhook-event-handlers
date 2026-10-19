@@ -24,13 +24,12 @@ import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.common.IdentityApplicationManagementException;
 import org.wso2.carbon.identity.application.common.model.ApplicationBasicInfo;
 import org.wso2.carbon.identity.application.common.model.ServiceProvider;
+import org.wso2.carbon.identity.application.common.util.IdentityApplicationConstants;
 import org.wso2.carbon.identity.core.context.IdentityContext;
 import org.wso2.carbon.identity.core.context.model.Flow;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
-import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
-import org.wso2.carbon.identity.organization.management.service.model.MinimalOrganization;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.wso2.event.handler.internal.component.WSO2EventHookHandlerDataHolder;
@@ -40,6 +39,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2TokenRevo
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.AccessToken;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Application;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.SharedUserProfile;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.UserStore;
@@ -49,6 +49,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+
+import static org.wso2.carbon.identity.application.mgt.ApplicationConstants.StandardInboundProtocols.OAUTH2;
 
 /**
  * Builder class for creating WSO2 Token Event Payloads.
@@ -67,13 +69,33 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
     public EventPayload buildAccessTokenRevokeEvent(EventData eventData) throws IdentityEventException {
 
         Tenant tenant = WSO2PayloadUtils.buildTenant();
-        UserStore userStore = WSO2PayloadUtils.buildUserStore(eventData);
-        List<Application> application = buildApplications(eventData);
-        Organization organization = WSO2PayloadUtils.buildOrganizationFromIdentityContext(
-                IdentityContext.getThreadLocalIdentityContext());
-        User user = WSO2PayloadUtils.buildUser(eventData);
-        if (user != null) {
+        boolean organizationAware = WSO2PayloadUtils.isOrganizationAwarePayloadEnabled();
+
+        // A revoked token belonged to the organization the event data's tenant states, while the user, its claims and
+        // its user store belong to the organization the user resides in; the two differ for a shared user.
+        String userResidentTenantDomain = organizationAware ? resolveUserResidentTenantDomain(eventData) : null;
+        String userTenantDomain = StringUtils.isNotBlank(userResidentTenantDomain)
+                ? userResidentTenantDomain : eventData.getTenantDomain();
+
+        UserStore userStore = organizationAware && WSO2PayloadUtils.isFederatedUser(eventData) ? null
+                : WSO2PayloadUtils.buildUserStore(eventData, userTenantDomain);
+        List<Application> application = buildApplications(eventData, organizationAware);
+        Organization organization = buildEventOrganization(eventData, organizationAware);
+        User user = WSO2PayloadUtils.buildUser(eventData, userTenantDomain);
+        if (user != null && !organizationAware) {
             user.setOrganization(organization);
+        } else if (user != null) {
+            user.setOrganization(resolveUserOrganization(eventData, userResidentTenantDomain, organization));
+            SharedUserProfile sharedUserProfile = buildSharedUserProfile(
+                    getProperty(eventData, Constants.SHARED_USER_ID), eventData.getTenantDomain());
+            if (sharedUserProfile != null) {
+                /*
+                 The shared profile references the user in the organization the token was for, so the user is not
+                 referenced a second time through the organization it resides in.
+                 */
+                user.setRef(null);
+                user.setSharedUserProfile(sharedUserProfile);
+            }
         }
 
         Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
@@ -97,33 +119,27 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
     public EventPayload buildAccessTokenIssueEvent(EventData eventData) throws IdentityEventException {
 
         Tenant tenant = WSO2PayloadUtils.buildTenant();
-        UserStore userStore = WSO2PayloadUtils.buildUserStore(eventData);
-        Application application = buildApplication(eventData);
+        boolean organizationAware = WSO2PayloadUtils.isOrganizationAwarePayloadEnabled();
+        Application application = buildApplication(eventData, organizationAware);
         AccessToken accessToken = buildAccessToken(eventData);
-        Organization organization = WSO2PayloadUtils.buildOrganizationFromIdentityContext(
-                IdentityContext.getThreadLocalIdentityContext());
+
+        // The event belongs to the organization being accessed, which the event data's tenant states, while the user,
+        // its claims and its user store belong to the organization the user resides in.
+        String userResidentTenantDomain = organizationAware ? resolveUserResidentTenantDomain(eventData) : null;
+        String userTenantDomain = StringUtils.isNotBlank(userResidentTenantDomain)
+                ? userResidentTenantDomain : eventData.getTenantDomain();
+
+        // A user federated from elsewhere has no user store here, so the one the token names is left out rather than
+        // stated wrongly.
+        UserStore userStore = organizationAware && WSO2PayloadUtils.isFederatedUser(eventData) ? null
+                : WSO2PayloadUtils.buildUserStore(eventData, userTenantDomain);
+        Organization organization = buildEventOrganization(eventData, organizationAware);
 
         User user = null;
         if (accessToken != null && WSO2PayloadUtils.isUserBasedGrantType(accessToken.getGrantType())) {
-            user = new User();
-            WSO2PayloadUtils.populateUserIdAndRef(user, eventData.getUserId());
-
-            boolean isOrganizationUser = isOrganizationUser(eventData);
-
-            if (isOrganizationUser) {
-                String userResidentOrganizationId = getUserResidentOrganizationIdForOrgUser(eventData);
-                String userResidentTenantDomain = resolveUserResidentTenantDomain(userResidentOrganizationId);
-                Organization userResidentOrganization =
-                        buildUserResidentOrganizationForOrgUser(userResidentOrganizationId, userResidentTenantDomain);
-
-                WSO2PayloadUtils.populateUserClaims(user, eventData.getUserId(), userResidentTenantDomain);
-                user.setOrganization(userResidentOrganization);
-            } else {
-                if (!WSO2PayloadUtils.isFederatedUser(eventData)) {
-                    WSO2PayloadUtils.populateUserClaims(user, eventData.getUserId(), eventData.getTenantDomain());
-                }
-                user.setOrganization(organization);
-            }
+            user = organizationAware
+                    ? buildOrganizationAwareUser(eventData, userResidentTenantDomain, userTenantDomain, organization)
+                    : buildUser(eventData, organization);
         }
 
         Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
@@ -142,6 +158,130 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
                 .action(action)
                 .initiatorIpAddress(initiatorIpAddress)
                 .build();
+    }
+
+    /**
+     * Organization the token event belongs to: with organization aware payloads the organization of the event's
+     * tenant, otherwise the organization on the thread, as before.
+     *
+     * @param eventData         Data of the token event.
+     * @param organizationAware Whether organization aware payloads are enabled.
+     * @return Organization the event belongs to.
+     */
+    private Organization buildEventOrganization(EventData eventData, boolean organizationAware) {
+
+        if (organizationAware) {
+            return WSO2PayloadUtils.resolveEventOrganization(eventData.getTenantDomain());
+        }
+        return WSO2PayloadUtils.buildOrganizationFromIdentityContext(IdentityContext.getThreadLocalIdentityContext());
+    }
+
+    /**
+     * User a token was issued for, as built before organization aware payloads.
+     *
+     * @param eventData         Data of the token event.
+     * @param eventOrganization Organization the event belongs to.
+     * @return The user.
+     */
+    private User buildUser(EventData eventData, Organization eventOrganization) {
+
+        User user = new User();
+        WSO2PayloadUtils.populateUserIdAndRef(user, eventData.getUserId());
+        if (isOrganizationUser(eventData)) {
+            String userResidentOrganizationId =
+                    getProperty(eventData, IdentityEventConstants.EventProperty.USER_RESIDENT_ORGANIZATION_ID);
+            String userResidentTenantDomain =
+                    WSO2PayloadUtils.resolveUserResidentTenantDomain(userResidentOrganizationId);
+            WSO2PayloadUtils.populateUserClaims(user, eventData.getUserId(), userResidentTenantDomain);
+            user.setOrganization(WSO2PayloadUtils.buildOrganizationFromOrgId(userResidentOrganizationId,
+                    userResidentTenantDomain));
+        } else {
+            if (!WSO2PayloadUtils.isFederatedUser(eventData)) {
+                WSO2PayloadUtils.populateUserClaims(user, eventData.getUserId(), eventData.getTenantDomain());
+            }
+            user.setOrganization(eventOrganization);
+        }
+        return user;
+    }
+
+    /**
+     * User a token was issued for, with its claims and organization taken from where it resides.
+     *
+     * @param eventData                Data of the token event.
+     * @param userResidentTenantDomain Tenant of the organization the user resides in, if the event names it.
+     * @param userTenantDomain         Tenant the user's claims are read from.
+     * @param eventOrganization        Organization the event belongs to.
+     * @return The user.
+     */
+    private User buildOrganizationAwareUser(EventData eventData, String userResidentTenantDomain,
+                                            String userTenantDomain, Organization eventOrganization) {
+
+        User user = new User();
+        // A user shared into the accessed organization has a profile there, which carries the reference to the
+        // user, so the user is not referenced again through where it resides.
+        SharedUserProfile sharedUserProfile = buildSharedUserProfile(
+                getProperty(eventData, Constants.SHARED_USER_ID), eventData.getTenantDomain());
+        if (sharedUserProfile != null) {
+            user.setId(eventData.getUserId());
+            user.setSharedUserProfile(sharedUserProfile);
+        } else {
+            WSO2PayloadUtils.populateUserIdAndRef(user, eventData.getUserId(), userTenantDomain);
+        }
+        if (!WSO2PayloadUtils.isFederatedUser(eventData) || StringUtils.isNotBlank(userResidentTenantDomain)) {
+            WSO2PayloadUtils.populateUserClaims(user, eventData.getUserId(), userTenantDomain);
+        }
+        user.setOrganization(resolveUserOrganization(eventData, userResidentTenantDomain, eventOrganization));
+        return user;
+    }
+
+    /**
+     * Organization the user the token was issued for resides in: for a shared user the one it was shared from,
+     * which the event names separately; for every other user, the organization the event belongs to.
+     *
+     * @param eventData                Data of the token event.
+     * @param userResidentTenantDomain Tenant of the organization the user resides in, if the event names it.
+     * @param eventOrganization        Organization the event belongs to.
+     * @return Organization the user resides in, falling back to the organization the event belongs to.
+     */
+    private Organization resolveUserOrganization(EventData eventData, String userResidentTenantDomain,
+                                                 Organization eventOrganization) {
+
+        if (StringUtils.isBlank(userResidentTenantDomain)
+                || StringUtils.equals(userResidentTenantDomain, eventData.getTenantDomain())) {
+            return eventOrganization;
+        }
+        Organization userResidentOrganization = WSO2PayloadUtils.buildOrganizationFromOrgId(
+                getProperty(eventData, IdentityEventConstants.EventProperty.USER_RESIDENT_ORGANIZATION_ID),
+                userResidentTenantDomain);
+        return userResidentOrganization != null ? userResidentOrganization : eventOrganization;
+    }
+
+    /**
+     * Tenant the application the token belongs to lives in, which is the tenant the token was issued in.
+     *
+     * @param eventData Data of the token event.
+     * @return That tenant, falling back to the tenant of the event.
+     */
+    private String resolveApplicationTenantDomain(EventData eventData) {
+
+        String issuingTenantDomain = resolveIssuingTenantDomain();
+        return StringUtils.isNotBlank(issuingTenantDomain) ? issuingTenantDomain : eventData.getTenantDomain();
+    }
+
+    /**
+     * Tenant the token was issued in. A token requested through the organization perspective of a tenant names
+     * the organization separately, so the organization of the context is the one the token was issued in.
+     *
+     * @return Tenant the token was issued in, or null if it cannot be told.
+     */
+    private String resolveIssuingTenantDomain() {
+
+        IdentityContext identityContext = IdentityContext.getThreadLocalIdentityContext();
+        if (identityContext.getOrganization() != null
+                && StringUtils.isNotBlank(identityContext.getOrganization().getOrganizationHandle())) {
+            return identityContext.getOrganization().getOrganizationHandle();
+        }
+        return identityContext.getTenantDomain();
     }
 
     private AccessToken buildAccessToken(EventData eventData) {
@@ -167,7 +307,7 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
         return null;
     }
 
-    private Application buildApplication(EventData eventData) {
+    private Application buildApplication(EventData eventData, boolean organizationAware) {
 
         if (eventData == null) {
             return null;
@@ -181,22 +321,58 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
             return new Application.Builder()
                     .name(applicationName)
                     .consumerKey(consumerKey)
+                    .organization(organizationAware ? resolveApplicationOrganization(eventData, consumerKey) : null)
                     .build();
         }
         return null;
     }
 
-    private List<Application> buildApplications(EventData eventData) {
+    /**
+     * Organization owning the application the token was issued to, for an event of a sub organization only. The
+     * application lives in the tenant the token was issued in, not in the tenant of the event.
+     *
+     * @param eventData   Data of the token event.
+     * @param consumerKey Consumer key the token was issued to.
+     * @return The owning organization, or null for an event of a root organization or when it cannot be resolved.
+     */
+    private Organization resolveApplicationOrganization(EventData eventData, String consumerKey) {
+
+        if (StringUtils.isBlank(consumerKey) || !WSO2PayloadUtils.isOrganization(eventData.getTenantDomain())) {
+            // Resolved before the application is looked up, so that an event of a root organization costs nothing.
+            return null;
+        }
+        try {
+            ServiceProvider serviceProvider = WSO2EventHookHandlerDataHolder.getInstance()
+                    .getApplicationManagementService().getServiceProviderByClientId(
+                    consumerKey, OAUTH2, resolveApplicationTenantDomain(eventData));
+            if (isNoApplication(serviceProvider)) {
+                return null;
+            }
+            return WSO2PayloadUtils.buildApplicationOrganization(serviceProvider.getTenantDomain(),
+                    eventData.getTenantDomain());
+        } catch (IdentityApplicationManagementException e) {
+            LOG.debug("Error while retrieving the application of consumer key: " + consumerKey, e);
+            return null;
+        }
+    }
+
+    private List<Application> buildApplications(EventData eventData, boolean organizationAware) {
 
         if (eventData == null) {
             return null;
         }
         Map<String, Object> properties = eventData.getProperties();
+        // The application lives in the tenant the token was issued in, not in the tenant of the event; for a user of a
+        // sub organization the two differ.
+        final String applicationTenantDomain = organizationAware ? resolveApplicationTenantDomain(eventData)
+                : eventData.getTenantDomain();
 
         if (properties.get(IdentityEventConstants.EventProperty.APPLICATION_ID) != null) {
             String applicationResourceId =
                     String.valueOf(properties.get(IdentityEventConstants.EventProperty.APPLICATION_ID));
-            Application application = buildApplicationFromResourceId(eventData, applicationResourceId);
+            Application application =
+                    buildApplicationFromResourceId(eventData, applicationResourceId, applicationTenantDomain,
+                            organizationAware);
             if (application != null) {
                 return List.of(application);
             }
@@ -204,14 +380,16 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
             return ((List<String>) properties.get(IdentityEventConstants.EventProperty.CONSUMER_KEYS)).stream()
                     .filter(Objects::nonNull)
                     .filter(consumerKey -> !Constants.CONSOLE_APP_CONSUMER_KEY.equals(consumerKey)) // exclude CONSOLE
-                    .map(consumerKey -> buildApplicationFromConsumerKey(eventData, consumerKey))
+                    .map(consumerKey -> buildApplicationFromConsumerKey(eventData, consumerKey,
+                            applicationTenantDomain, organizationAware))
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
         }
         return null;
     }
 
-    private Application buildApplicationFromConsumerKey(EventData eventData, String consumerKey) {
+    private Application buildApplicationFromConsumerKey(EventData eventData, String consumerKey,
+                                                        String applicationTenantDomain, boolean organizationAware) {
 
         if (eventData == null || StringUtils.isBlank(consumerKey)) {
             return null;
@@ -220,21 +398,38 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
         try {
             ServiceProvider serviceProvider =
                     WSO2EventHookHandlerDataHolder.getInstance().getApplicationManagementService()
-                            .getServiceProviderByClientId(consumerKey, "oauth2", eventData.getTenantDomain());
-            if (serviceProvider != null) {
-                return new Application.Builder()
-                        .id(serviceProvider.getApplicationResourceId())
-                        .name(serviceProvider.getApplicationName())
-                        .consumerKey(consumerKey)
-                        .build();
+                            .getServiceProviderByClientId(consumerKey, OAUTH2, applicationTenantDomain);
+            if (isNoApplication(serviceProvider)) {
+                return null;
             }
+            return new Application.Builder()
+                    .id(serviceProvider.getApplicationResourceId())
+                    .name(serviceProvider.getApplicationName())
+                    .consumerKey(consumerKey)
+                    .organization(organizationAware ? WSO2PayloadUtils.buildApplicationOrganization(
+                            serviceProvider.getTenantDomain(), eventData.getTenantDomain()) : null)
+                    .build();
         } catch (IdentityApplicationManagementException e) {
             LOG.debug("Error while retrieving application by consumer key: " + consumerKey, e);
         }
         return null;
     }
 
-    private Application buildApplicationFromResourceId(EventData eventData, String resourceId) {
+    /**
+     * Whether the application management service named no application: for a consumer key of none of its
+     * applications it answers with the default service provider of the tenant.
+     *
+     * @param serviceProvider Application the service answered with.
+     * @return true when it names no application.
+     */
+    private boolean isNoApplication(ServiceProvider serviceProvider) {
+
+        return serviceProvider == null || IdentityApplicationConstants.DEFAULT_SP_CONFIG
+                .equals(serviceProvider.getApplicationName());
+    }
+
+    private Application buildApplicationFromResourceId(EventData eventData, String resourceId,
+                                                       String applicationTenantDomain, boolean organizationAware) {
 
         if (eventData == null || StringUtils.isBlank(resourceId)) {
             return null;
@@ -243,13 +438,15 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
         try {
             ApplicationBasicInfo applicationBasicInfo =
                     WSO2EventHookHandlerDataHolder.getInstance().getApplicationManagementService()
-                            .getApplicationBasicInfoByResourceId(resourceId, eventData.getTenantDomain());
+                            .getApplicationBasicInfoByResourceId(resourceId, applicationTenantDomain);
 
             if (applicationBasicInfo != null) {
                 return new Application.Builder()
                         .id(resourceId)
                         .name(applicationBasicInfo.getApplicationName())
                         .consumerKey(applicationBasicInfo.getClientId())
+                        .organization(organizationAware ? WSO2PayloadUtils.buildApplicationOrganization(
+                                applicationTenantDomain, eventData.getTenantDomain()) : null)
                         .build();
             }
         } catch (IdentityApplicationManagementException e) {
@@ -258,58 +455,48 @@ public class WSO2TokenEventPayloadBuilder implements TokenEventPayloadBuilder {
         return null;
     }
 
-    private String resolveUserResidentTenantDomain(String userResidentOrganizationId) {
+    /**
+     * Tenant of the organization the user the token was issued for resides in. The event's organization user flag
+     * is not used, as it holds only for a user federated from an organization.
+     *
+     * @param eventData Data of the token event.
+     * @return That tenant, or null when the event does not name the organization or it cannot be resolved.
+     */
+    private String resolveUserResidentTenantDomain(EventData eventData) {
 
-        if (StringUtils.isBlank(userResidentOrganizationId)) {
-            return null;
-        }
-
-        try {
-            return WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
-                    .resolveTenantDomain(userResidentOrganizationId);
-        } catch (OrganizationManagementException e) {
-            LOG.debug("Error while resolving tenant domain for user resident organization: " +
-                    userResidentOrganizationId, e);
-        }
-        return null;
-    }
-
-    private Organization buildUserResidentOrganizationForOrgUser(String userResidentOrganizationId,
-                                                                 String userResidentTenantDomain) {
-
-        if (StringUtils.isBlank(userResidentOrganizationId) || StringUtils.isBlank(userResidentTenantDomain)) {
-            return null;
-        }
-
-        try {
-            MinimalOrganization userResidentOrganization =
-                    WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
-                            .getMinimalOrganization(userResidentOrganizationId, userResidentTenantDomain);
-            if (userResidentOrganization != null) {
-                return new Organization(userResidentOrganization.getId(),
-                        userResidentOrganization.getName(),
-                        userResidentOrganization.getOrganizationHandle(),
-                        userResidentOrganization.getDepth());
-            }
-        } catch (OrganizationManagementException e) {
-            LOG.debug("Error while resolving retrieving user resident organization: " +
-                    userResidentOrganizationId, e);
-        }
-        LOG.debug("No organization found for the given organization id: " + userResidentOrganizationId);
-        return null;
+        return WSO2PayloadUtils.resolveUserResidentTenantDomain(
+                getProperty(eventData, IdentityEventConstants.EventProperty.USER_RESIDENT_ORGANIZATION_ID));
     }
 
     private boolean isOrganizationUser(EventData eventData) {
 
-        return Boolean.parseBoolean(String.valueOf(
-                eventData.getProperties().get(IdentityEventConstants.EventProperty.IS_ORGANIZATION_USER)));
+        return Boolean.parseBoolean(getProperty(eventData, IdentityEventConstants.EventProperty.IS_ORGANIZATION_USER));
     }
 
-    private String getUserResidentOrganizationIdForOrgUser(EventData eventData) {
+    /**
+     * Profile of the user in the organization it is accessing, which a shared user has apart from the one where
+     * it resides. The reference is addressed through the organization the profile belongs to.
+     *
+     * @param sharedUserId          Identifier of that profile.
+     * @param accessingTenantDomain Tenant of the organization the profile belongs to.
+     * @return The profile, or null when the user has none.
+     */
+    private SharedUserProfile buildSharedUserProfile(String sharedUserId, String accessingTenantDomain) {
 
-        return eventData.getProperties().get(IdentityEventConstants.EventProperty.USER_RESIDENT_ORGANIZATION_ID) !=
-                null ?
-                String.valueOf(eventData.getProperties()
-                        .get(IdentityEventConstants.EventProperty.USER_RESIDENT_ORGANIZATION_ID)) : null;
+        if (StringUtils.isBlank(sharedUserId)) {
+            return null;
+        }
+        return new SharedUserProfile(sharedUserId,
+                WSO2PayloadUtils.constructFullURLWithEndpoint(Constants.SCIM2_USERS_ENDPOINT,
+                        accessingTenantDomain) + "/" + sharedUserId);
+    }
+
+    private String getProperty(EventData eventData, String propertyName) {
+
+        if (eventData == null || eventData.getProperties() == null) {
+            return null;
+        }
+        Object property = eventData.getProperties().get(propertyName);
+        return property != null ? StringUtils.trimToNull(String.valueOf(property)) : null;
     }
 }

@@ -576,7 +576,7 @@
         <org.wso2.carbon.identity.organization.management.version>2.5.22</org.wso2.carbon.identity.organization.management.version>
         <org.wso2.carbon.identity.organization.management.version.range>[2.0.0, 3.0.0)</org.wso2.carbon.identity.organization.management.version.range>
 
-        <org.wso2.carbon.identity.inbound.auth.oauth2.version>7.0.114
+        <org.wso2.carbon.identity.inbound.auth.oauth2.version>7.5.98
         </org.wso2.carbon.identity.inbound.auth.oauth2.version>
 
         <org.wso2.identity.webhook.common.event.handler.version.range>[1.0.0, 2.0.0)

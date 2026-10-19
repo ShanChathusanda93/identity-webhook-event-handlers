@@ -1020,15 +1020,27 @@ public class WSO2PayloadUtils {
      */
     public static String resolveUserResidentTenantDomain(AuthenticatedUser authenticatedUser) {
 
-        if (authenticatedUser == null || StringUtils.isBlank(authenticatedUser.getUserResidentOrganization())) {
+        return authenticatedUser != null
+                ? resolveUserResidentTenantDomain(authenticatedUser.getUserResidentOrganization()) : null;
+    }
+
+    /**
+     * Tenant of the organization a user resides in, given that organization's identifier.
+     *
+     * @param userResidentOrganizationId Identifier of the organization the user resides in.
+     * @return Tenant domain, or null when no organization is given or it cannot be resolved.
+     */
+    public static String resolveUserResidentTenantDomain(String userResidentOrganizationId) {
+
+        if (StringUtils.isBlank(userResidentOrganizationId)) {
             return null;
         }
         try {
             return WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
-                    .resolveTenantDomain(authenticatedUser.getUserResidentOrganization());
+                    .resolveTenantDomain(userResidentOrganizationId);
         } catch (OrganizationManagementException e) {
             log.debug("Error while resolving the tenant of the organization the user resides in: " +
-                    authenticatedUser.getUserResidentOrganization(), e);
+                    userResidentOrganizationId, e);
             return null;
         }
     }
@@ -1041,11 +1053,23 @@ public class WSO2PayloadUtils {
      */
     public static Organization buildUserResidentOrganization(AuthenticatedUser authenticatedUser) {
 
-        if (authenticatedUser == null || StringUtils.isBlank(authenticatedUser.getUserResidentOrganization())) {
+        return authenticatedUser != null
+                ? buildUserResidentOrganization(authenticatedUser.getUserResidentOrganization()) : null;
+    }
+
+    /**
+     * Organization a user resides in, given that organization's identifier.
+     *
+     * @param userResidentOrganizationId Identifier of the organization the user resides in.
+     * @return The organization, or null when no organization is given or it cannot be resolved.
+     */
+    public static Organization buildUserResidentOrganization(String userResidentOrganizationId) {
+
+        if (StringUtils.isBlank(userResidentOrganizationId)) {
             return null;
         }
-        return buildOrganizationFromOrgId(authenticatedUser.getUserResidentOrganization(),
-                resolveUserResidentTenantDomain(authenticatedUser));
+        return buildOrganizationFromOrgId(userResidentOrganizationId,
+                resolveUserResidentTenantDomain(userResidentOrganizationId));
     }
 
     /**
@@ -1150,5 +1174,23 @@ public class WSO2PayloadUtils {
             return null;
         }
         return relativeDepth;
+    }
+
+    /**
+     * Organization owning the application of an event, given the application's own tenant. Only an event of a
+     * sub organization carries it.
+     *
+     * @param applicationTenantDomain Tenant the application resides in.
+     * @param eventTenantDomain       Tenant the event belongs to.
+     * @return The organization owning the application, or null for an event of a root organization or when it
+     * cannot be resolved.
+     */
+    public static Organization buildApplicationOrganization(String applicationTenantDomain,
+                                                            String eventTenantDomain) {
+
+        if (!isOrganization(eventTenantDomain)) {
+            return null;
+        }
+        return buildOrganizationFromTenantDomain(applicationTenantDomain);
     }
 }

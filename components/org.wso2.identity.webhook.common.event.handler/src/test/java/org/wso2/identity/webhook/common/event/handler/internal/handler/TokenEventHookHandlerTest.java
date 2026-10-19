@@ -15,10 +15,15 @@ import org.wso2.carbon.identity.configuration.mgt.core.model.Resource;
 import org.wso2.carbon.identity.configuration.mgt.core.model.Resources;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
+import org.wso2.carbon.identity.application.common.model.ServiceProvider;
+import org.wso2.carbon.identity.application.common.model.ServiceProviderProperty;
+import org.wso2.carbon.identity.application.mgt.ApplicationManagementService;
 import org.wso2.carbon.identity.event.event.Event;
+import org.wso2.carbon.identity.event.publisher.api.model.EventContext;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayload;
 import org.wso2.carbon.identity.event.publisher.api.service.EventPublisherService;
+import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
 import org.wso2.carbon.identity.topic.management.api.service.TopicManagementService;
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
@@ -35,17 +40,23 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 import static org.testng.Assert.assertEquals;
+import static org.wso2.carbon.identity.application.mgt.ApplicationConstants.IS_FRAGMENT_APP;
 import static org.wso2.identity.webhook.common.event.handler.util.TestUtils.closeMockedIdentityTenantUtil;
 import static org.wso2.identity.webhook.common.event.handler.util.TestUtils.closeMockedServiceURLBuilder;
 import static org.wso2.identity.webhook.common.event.handler.util.TestUtils.mockIdentityTenantUtil;
@@ -78,6 +89,12 @@ public class TokenEventHookHandlerTest {
     private static final String SAMPLE_ATTRIBUTE_JSON = "{\"sendCredentials\":false,\"publishEnabled\":true}";
     private static final String DOMAIN_QUALIFIED_ADDED_USER_NAME = "PRIMARY/john";
     private static final String CARBON_SUPER = "carbon.super";
+    private static final String SAMPLE_ISSUE_EVENT_KEY =
+            "schemas.identity.wso2.org/events/token/event-type/accessTokenIssued";
+    private static final String TOKEN_CHANNEL_URI = "token/channel/uri";
+    private static final String CLIENT_ID = "client-id";
+    private static final String SUB_ORG_ID = "sub-org-id";
+    private static final String SUB_ORG_TENANT_DOMAIN = "sub-org";
 
     @BeforeClass
     public void setupClass() throws IdentityEventException {
@@ -171,6 +188,137 @@ public class TokenEventHookHandlerTest {
                 verify(mockedEventPublisherService, times(0)).publish(any(), any());
             }
         }
+    }
+
+    @Test
+    public void testHandleEventPublishesTokenToItsTenantWithoutChildOrganizationSubscriptions() throws Exception {
+
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(IdentityEventConstants.EventProperty.CONSUMER_KEY, CLIENT_ID);
+        properties.put(IdentityEventConstants.EventProperty.ACCESSING_ORGANIZATION_ID, SUB_ORG_ID);
+        ApplicationManagementService applicationManagementService = mock(ApplicationManagementService.class);
+        OrganizationManager organizationManager = mock(OrganizationManager.class);
+        EventHookHandlerDataHolder.getInstance().setApplicationManagementService(applicationManagementService);
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(organizationManager);
+        TokenEventPayloadBuilder payloadBuilder = mock(TokenEventPayloadBuilder.class);
+
+        handleTokenIssueEvent(createTokenEventData(CARBON_SUPER, properties), payloadBuilder, false);
+
+        verify(payloadBuilder).buildAccessTokenIssueEvent(argThat(data -> CARBON_SUPER.equals(data.getTenantDomain())));
+        verify(mockedEventPublisherService).publish(any(),
+                argThat(eventContext -> CARBON_SUPER.equals(eventContext.getTenantDomain())));
+        verifyNoInteractions(applicationManagementService, organizationManager);
+    }
+
+    @Test
+    public void testHandleEventPublishesTokenToTheOrganizationItAccessed() throws Exception {
+
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(IdentityEventConstants.EventProperty.CONSUMER_KEY, CLIENT_ID);
+        properties.put(IdentityEventConstants.EventProperty.ACCESSING_ORGANIZATION_ID, SUB_ORG_ID);
+        ApplicationManagementService applicationManagementService = mock(ApplicationManagementService.class);
+        when(applicationManagementService.getServiceProviderByClientId(eq(CLIENT_ID), anyString(), eq(CARBON_SUPER)))
+                .thenReturn(new ServiceProvider());
+        OrganizationManager organizationManager = mock(OrganizationManager.class);
+        when(organizationManager.resolveTenantDomain(SUB_ORG_ID)).thenReturn(SUB_ORG_TENANT_DOMAIN);
+        EventHookHandlerDataHolder.getInstance().setApplicationManagementService(applicationManagementService);
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(organizationManager);
+        TokenEventPayloadBuilder payloadBuilder = mock(TokenEventPayloadBuilder.class);
+
+        handleTokenIssueEvent(createTokenEventData(CARBON_SUPER, properties), payloadBuilder, true);
+
+        verify(payloadBuilder).buildAccessTokenIssueEvent(
+                argThat(data -> SUB_ORG_TENANT_DOMAIN.equals(data.getTenantDomain())));
+        verify(mockedEventPublisherService).publish(any(),
+                argThat(eventContext -> SUB_ORG_TENANT_DOMAIN.equals(eventContext.getTenantDomain())));
+    }
+
+    @DataProvider(name = "sharedApplicationTokenDataProvider")
+    public Object[][] sharedApplicationTokenDataProvider() {
+
+        return new Object[][]{
+                // Legacy shared application login: the token of the sub organization leg is not published.
+                {false, 0},
+                // Enhanced organization login: the shared application's token is the only one, so it is published.
+                {true, 1}
+        };
+    }
+
+    @Test(dataProvider = "sharedApplicationTokenDataProvider")
+    public void testHandleEventForTokenOfSharedApplication(boolean enhancedOrganizationLogin, int publishCount)
+            throws Exception {
+
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(IdentityEventConstants.EventProperty.CONSUMER_KEY, CLIENT_ID);
+        ServiceProviderProperty fragmentAppProperty = new ServiceProviderProperty();
+        fragmentAppProperty.setName(IS_FRAGMENT_APP);
+        fragmentAppProperty.setValue("true");
+        ServiceProvider sharedApplication = new ServiceProvider();
+        sharedApplication.setApplicationResourceId("shared-app-id");
+        sharedApplication.setSpProperties(new ServiceProviderProperty[]{fragmentAppProperty});
+        ServiceProvider mainApplication = new ServiceProvider();
+        mainApplication.setEnhancedOrganizationAuthenticationEnabled(enhancedOrganizationLogin);
+        ApplicationManagementService applicationManagementService = mock(ApplicationManagementService.class);
+        when(applicationManagementService.getServiceProviderByClientId(eq(CLIENT_ID), anyString(),
+                eq(SUB_ORG_TENANT_DOMAIN))).thenReturn(sharedApplication);
+        when(applicationManagementService.getMainAppId("shared-app-id")).thenReturn("main-app-id");
+        when(applicationManagementService.getApplicationByResourceId(eq("main-app-id"), any()))
+                .thenReturn(mainApplication);
+        EventHookHandlerDataHolder.getInstance().setApplicationManagementService(applicationManagementService);
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(mock(OrganizationManager.class));
+        TokenEventPayloadBuilder payloadBuilder = mock(TokenEventPayloadBuilder.class);
+
+        handleTokenIssueEvent(createTokenEventData(SUB_ORG_TENANT_DOMAIN, properties), payloadBuilder, true);
+
+        verify(mockedEventPublisherService, times(publishCount)).publish(any(),
+                argThat(eventContext -> SUB_ORG_TENANT_DOMAIN.equals(eventContext.getTenantDomain())));
+        if (publishCount == 0) {
+            verify(payloadBuilder, never()).buildAccessTokenIssueEvent(any());
+        }
+    }
+
+    private void handleTokenIssueEvent(EventData eventData, TokenEventPayloadBuilder payloadBuilder,
+                                       boolean childOrganizationSubscriptionEnabled) throws Exception {
+
+        String eventName = IdentityEventConstants.Event.POST_ISSUE_ACCESS_TOKEN_V2;
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_ISSUE_EVENT_KEY);
+        Channel channel = new Channel("Token Channel", "Token Channel", TOKEN_CHANNEL_URI,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("WSO2", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        EventMetadata eventMetadata = mock(EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(TOKEN_CHANNEL_URI);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_ISSUE_EVENT_KEY);
+        when(payloadBuilder.buildAccessTokenIssueEvent(any(EventData.class))).thenReturn(mockedEventPayload);
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getTokenEventPayloadBuilder(any()))
+                    .thenReturn(payloadBuilder);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled)
+                    .thenReturn(childOrganizationSubscriptionEnabled);
+            utilsMocked.when(() -> EventHookHandlerUtils.isFragmentApplication(any())).thenCallRealMethod();
+
+            tokenEventHookHandler.handleEvent(new Event(eventName, new HashMap<>()));
+        }
+    }
+
+    private EventData createTokenEventData(String tenantDomain, Map<String, Object> properties) {
+
+        return EventData.builder()
+                .eventName(IdentityEventConstants.Event.POST_ISSUE_ACCESS_TOKEN_V2)
+                .tenantDomain(tenantDomain)
+                .properties(properties)
+                .build();
     }
 
     private Event createEventWithProperties(String eventName) {

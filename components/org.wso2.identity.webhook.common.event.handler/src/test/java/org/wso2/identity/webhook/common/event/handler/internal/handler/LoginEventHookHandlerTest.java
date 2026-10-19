@@ -454,6 +454,7 @@ public class LoginEventHookHandlerTest {
                     .thenReturn(b2bUserLogin);
             utilsMocked.when(() -> EventHookHandlerUtils.isSubOrganizationLoginOfSharedApplication(context))
                     .thenCallRealMethod();
+            utilsMocked.when(() -> EventHookHandlerUtils.isFragmentApplication(any())).thenCallRealMethod();
             utilsMocked.when(() -> EventHookHandlerUtils.resolveAccessedOrganizationTenantDomain(any()))
                     .thenCallRealMethod();
             utilsMocked.when(() -> EventHookHandlerUtils.resolveUserAccessingOrganizationTenantDomain(any()))
