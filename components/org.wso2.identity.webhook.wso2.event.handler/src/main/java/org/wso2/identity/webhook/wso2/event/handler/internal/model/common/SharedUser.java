@@ -31,7 +31,7 @@ public class SharedUser {
     private List<UserClaim> claims;
     private Organization organization;
     private String ref;
-    private List<RoleRef> roles;
+    private List<SharedUserRole> roles;
 
     public String getId() {
 
@@ -76,12 +76,12 @@ public class SharedUser {
         this.ref = ref;
     }
 
-    public List<RoleRef> getRoles() {
+    public List<SharedUserRole> getRoles() {
 
         return roles;
     }
 
-    public void setRoles(List<RoleRef> roles) {
+    public void setRoles(List<SharedUserRole> roles) {
 
         this.roles = roles;
     }
