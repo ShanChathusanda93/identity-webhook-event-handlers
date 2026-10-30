@@ -24,9 +24,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
 
 /**
  * Payload model for the userUnshared event, delivered to the organization the user was shared from.
- * <p>
- * {@code user} is the user that was unshared, in the organization it resides in, which is {@code organization}.
- * {@code unsharedUser} is the user removed by the unsharing, in the organization the user was unshared from.
+ * {@code unsharedUser} is the user removed by the unsharing, in the organization it was unshared from.
  */
 public class WSO2UserUnsharedEventPayload extends WSO2BaseEventPayload {
 

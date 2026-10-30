@@ -62,16 +62,8 @@ import static org.wso2.carbon.identity.organization.management.ext.Constants.EVE
 import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants.USERNAME_CLAIM_URI;
 
 /**
- * WSO2 implementation of UserSharingEventPayloadBuilder.
- * <p>
- * The userShared and userUnshared payloads describe the user from the organization it was shared from, along with
- * the shared user in the organization it was shared to, or unshared from. The sharedUserAdded and sharedUserRemoved
- * payloads describe the shared user from the organization it was shared to. The claims of the user are read from the
- * organization it resides in, since the shared user no longer exists once it is unshared. Only the username is
- * included, along with the organization and the reference of the user.
- * <p>
- * The action is the name of the flow the user sharing API enters. When no flow is active, for example when the user
- * is shared into an organization created later, the action falls back to the user sharing operation.
+ * WSO2 implementation of UserSharingEventPayloadBuilder. The username is read from the resident user, since the
+ * shared user no longer exists once unshared. The action is the active flow, falling back to the sharing operation.
  */
 public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPayloadBuilder {
 
@@ -105,7 +97,8 @@ public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPaylo
                 .user(buildResidentUser(eventParams, userResidentOrganization))
                 // The roles of the shared user, as the roles of the organization the user was shared from.
                 .sharedUser(toSharedUser(buildSharedUserRef(sharedUserId, sharedOrganization, true),
-                        buildRoles(eventParams, EVENT_PROP_ROLE_ID, EVENT_PROP_ROLE_IS_SHARED, userResidentOrganization)))
+                        buildRoles(eventParams, EVENT_PROP_ROLE_ID, EVENT_PROP_ROLE_IS_SHARED,
+                                userResidentOrganization)))
                 .build();
     }
 
@@ -241,9 +234,7 @@ public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPaylo
     }
 
     /**
-     * Build the tenant the operation was performed in.
-     * <p>
-     * The identity context is preferred, with the tenant domain resolved for the event as the fallback.
+     * Build the tenant the operation was performed in, from the identity context or else the event's tenant domain.
      *
      * @param eventData Data of the event being built.
      * @return The tenant, or null when it cannot be resolved.

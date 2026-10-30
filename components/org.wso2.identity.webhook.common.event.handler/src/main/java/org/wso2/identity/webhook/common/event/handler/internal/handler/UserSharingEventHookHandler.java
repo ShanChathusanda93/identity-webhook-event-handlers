@@ -53,12 +53,8 @@ import static org.wso2.identity.webhook.common.event.handler.api.constants.Const
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.EVENT_PROFILE_VERSION;
 
 /**
- * Organization User Sharing Event Hook Handler.
- * <p>
- * A user shared into, or unshared from, an organization is reported to two organizations. The organization the user
- * was shared from receives the event the event profile maps the user sharing event to (userShared or userUnshared),
- * and the organization the user was shared to receives the matching sharedUserAdded or sharedUserRemoved event, on
- * the same channel.
+ * Organization User Sharing Event Hook Handler. Delivers userShared / userUnshared to the organization the user was
+ * shared from, and sharedUserAdded / sharedUserRemoved to the organization it was shared to.
  */
 public class UserSharingEventHookHandler extends AbstractEventHandler {
 

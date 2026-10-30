@@ -25,9 +25,7 @@ import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 
 /**
  * Interface for Organization User Sharing Event Payload Builder.
- * <p>
- * Each user shared into, or unshared from, an organization is reported with two events: one to the organization the
- * user was shared from, and one to the organization the user was shared to.
+ * Each share or unshare is reported to both the organization the user was shared from and the one it was shared to.
  */
 public interface UserSharingEventPayloadBuilder {
 

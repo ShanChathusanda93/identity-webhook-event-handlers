@@ -25,13 +25,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant
 
 /**
  * Payload model for the sharedUserAdded and sharedUserRemoved events, delivered to the organization the user was
- * shared to.
- * <p>
- * {@code user} is the shared user in {@code organization}, the organization the user was shared to, or unshared from.
- * The organization of {@code user} is the organization the user resides in, which the user was shared from, and its
- * roles are the roles the sharing assigned to it, as roles of {@code organization}.
- * <p>
- * The fields follow {@link WSO2BaseEventPayload}, whose {@code user} is not a shared user.
+ * shared to. Not a {@link WSO2BaseEventPayload}, since its {@code user} is a shared user.
  */
 public class WSO2SharedUserEventPayload extends EventPayload {
 

@@ -25,10 +25,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
 
 /**
  * Payload model for the userShared event, delivered to the organization the user was shared from.
- * <p>
- * {@code user} is the user that was shared, in the organization it resides in, which is {@code organization}.
- * {@code sharedUser} is the user created by the sharing, in the organization the user was shared to, with the roles
- * the sharing assigned to it, as roles of {@code organization}.
+ * {@code sharedUser} is the user created by the sharing, with the assigned roles as roles of {@code organization}.
  */
 public class WSO2UserSharedEventPayload extends WSO2BaseEventPayload {
 
