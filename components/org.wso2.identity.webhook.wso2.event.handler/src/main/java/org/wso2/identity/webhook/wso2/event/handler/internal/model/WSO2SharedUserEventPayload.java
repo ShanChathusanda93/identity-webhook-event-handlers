@@ -18,24 +18,29 @@
 
 package org.wso2.identity.webhook.wso2.event.handler.internal.model;
 
+import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
-import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.RoleRef;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.SharedUser;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
-import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
-
-import java.util.List;
 
 /**
  * Payload model for the sharedUserAdded and sharedUserRemoved events, delivered to the organization the user was
  * shared to.
  * <p>
  * {@code user} is the shared user in {@code organization}, the organization the user was shared to, or unshared from.
- * The organization of {@code user} is the organization the user resides in, which the user was shared from.
- * {@code roles} are the roles assigned to the shared user by the sharing, as roles of {@code organization}.
+ * The organization of {@code user} is the organization the user resides in, which the user was shared from, and its
+ * roles are the roles the sharing assigned to it, as roles of {@code organization}.
+ * <p>
+ * The fields follow {@link WSO2BaseEventPayload}, whose {@code user} is not a shared user.
  */
-public class WSO2SharedUserEventPayload extends WSO2BaseEventPayload {
+public class WSO2SharedUserEventPayload extends EventPayload {
 
-    private final List<RoleRef> roles;
+    private final String initiatorType;
+    private final String initiatorIpAddress;
+    private final SharedUser user;
+    private final Tenant tenant;
+    private final Organization organization;
+    private final String action;
 
     private WSO2SharedUserEventPayload(Builder builder) {
 
@@ -45,12 +50,36 @@ public class WSO2SharedUserEventPayload extends WSO2BaseEventPayload {
         this.organization = builder.organization;
         this.action = builder.action;
         this.user = builder.user;
-        this.roles = builder.roles;
     }
 
-    public List<RoleRef> getRoles() {
+    public String getInitiatorType() {
 
-        return roles;
+        return initiatorType;
+    }
+
+    public String getInitiatorIpAddress() {
+
+        return initiatorIpAddress;
+    }
+
+    public SharedUser getUser() {
+
+        return user;
+    }
+
+    public Tenant getTenant() {
+
+        return tenant;
+    }
+
+    public Organization getOrganization() {
+
+        return organization;
+    }
+
+    public String getAction() {
+
+        return action;
     }
 
     /**
@@ -63,8 +92,7 @@ public class WSO2SharedUserEventPayload extends WSO2BaseEventPayload {
         private Tenant tenant;
         private Organization organization;
         private String action;
-        private User user;
-        private List<RoleRef> roles;
+        private SharedUser user;
 
         public Builder initiatorType(String initiatorType) {
 
@@ -96,15 +124,9 @@ public class WSO2SharedUserEventPayload extends WSO2BaseEventPayload {
             return this;
         }
 
-        public Builder user(User user) {
+        public Builder user(SharedUser user) {
 
             this.user = user;
-            return this;
-        }
-
-        public Builder roles(List<RoleRef> roles) {
-
-            this.roles = roles;
             return this;
         }
 

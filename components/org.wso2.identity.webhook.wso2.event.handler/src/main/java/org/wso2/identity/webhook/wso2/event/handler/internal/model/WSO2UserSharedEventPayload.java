@@ -19,23 +19,20 @@
 package org.wso2.identity.webhook.wso2.event.handler.internal.model;
 
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
-import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.RoleRef;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.SharedUser;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
-
-import java.util.List;
 
 /**
  * Payload model for the userShared event, delivered to the organization the user was shared from.
  * <p>
  * {@code user} is the user that was shared, in the organization it resides in, which is {@code organization}.
- * {@code sharedUser} is the user created by the sharing, in the organization the user was shared to.
- * {@code roles} are the roles assigned to it by the sharing, as roles of {@code organization}.
+ * {@code sharedUser} is the user created by the sharing, in the organization the user was shared to, with the roles
+ * the sharing assigned to it, as roles of {@code organization}.
  */
 public class WSO2UserSharedEventPayload extends WSO2BaseEventPayload {
 
-    private final User sharedUser;
-    private final List<RoleRef> roles;
+    private final SharedUser sharedUser;
 
     private WSO2UserSharedEventPayload(Builder builder) {
 
@@ -46,17 +43,11 @@ public class WSO2UserSharedEventPayload extends WSO2BaseEventPayload {
         this.action = builder.action;
         this.user = builder.user;
         this.sharedUser = builder.sharedUser;
-        this.roles = builder.roles;
     }
 
-    public User getSharedUser() {
+    public SharedUser getSharedUser() {
 
         return sharedUser;
-    }
-
-    public List<RoleRef> getRoles() {
-
-        return roles;
     }
 
     /**
@@ -70,8 +61,7 @@ public class WSO2UserSharedEventPayload extends WSO2BaseEventPayload {
         private Organization organization;
         private String action;
         private User user;
-        private User sharedUser;
-        private List<RoleRef> roles;
+        private SharedUser sharedUser;
 
         public Builder initiatorType(String initiatorType) {
 
@@ -109,15 +99,9 @@ public class WSO2UserSharedEventPayload extends WSO2BaseEventPayload {
             return this;
         }
 
-        public Builder sharedUser(User sharedUser) {
+        public Builder sharedUser(SharedUser sharedUser) {
 
             this.sharedUser = sharedUser;
-            return this;
-        }
-
-        public Builder roles(List<RoleRef> roles) {
-
-            this.roles = roles;
             return this;
         }
 

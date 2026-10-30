@@ -41,6 +41,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserUnsha
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.RoleAudience;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.RoleRef;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.SharedUser;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
 import org.wso2.identity.webhook.wso2.event.handler.internal.util.WSO2PayloadUtils;
@@ -101,8 +102,9 @@ public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPaylo
                 .initiatorIpAddress(WSO2PayloadUtils.resolveInitiatorIpAddress())
                 .action(resolveAction(flow, ACTION_USER_SHARE))
                 .user(buildResidentUser(eventParams, userResidentOrganization))
-                .sharedUser(buildSharedUserRef(sharedUserId, sharedOrganization, true))
-                .roles(buildRoles(eventParams, EVENT_PROP_ROLE_ID, userResidentOrganization))
+                // The roles of the shared user, as the roles of the organization the user was shared from.
+                .sharedUser(toSharedUser(buildSharedUserRef(sharedUserId, sharedOrganization, true),
+                        buildRoles(eventParams, EVENT_PROP_ROLE_ID, userResidentOrganization)))
                 .build();
     }
 
@@ -164,9 +166,11 @@ public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPaylo
                 .initiatorType(WSO2PayloadUtils.getFlowInitiatorType(flow))
                 .initiatorIpAddress(WSO2PayloadUtils.resolveInitiatorIpAddress())
                 .action(resolveAction(flow, defaultAction))
-                .user(buildUser(asString(eventParams.get(EVENT_PROP_SHARED_USER_ID)), sharedOrganization,
-                        asString(eventParams.get(EVENT_PROP_ASSOCIATED_USER_ID)), userResidentOrganization))
-                .roles(withRoles ? buildRoles(eventParams, EVENT_PROP_SHARED_ROLE_ID, sharedOrganization) : null)
+                // The roles of the shared user, as the roles of the organization the user was shared to.
+                .user(toSharedUser(buildUser(asString(eventParams.get(EVENT_PROP_SHARED_USER_ID)),
+                        sharedOrganization, asString(eventParams.get(EVENT_PROP_ASSOCIATED_USER_ID)),
+                        userResidentOrganization),
+                        withRoles ? buildRoles(eventParams, EVENT_PROP_SHARED_ROLE_ID, sharedOrganization) : null))
                 .build();
     }
 
@@ -209,6 +213,29 @@ public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPaylo
         }
         user.setOrganization(organization);
         return user;
+    }
+
+    /**
+     * Build a shared user from the given user, with the given roles.
+     *
+     * @param user  The user.
+     * @param roles The roles the sharing assigned to the user, or null.
+     * @return The shared user, or null when the user is null.
+     */
+    private SharedUser toSharedUser(User user, List<RoleRef> roles) {
+
+        if (user == null) {
+            return null;
+        }
+        SharedUser sharedUser = new SharedUser();
+        sharedUser.setId(user.getId());
+        if (user.getClaims() != null) {
+            user.getClaims().forEach(sharedUser::addClaim);
+        }
+        sharedUser.setOrganization(user.getOrganization());
+        sharedUser.setRef(user.getRef());
+        sharedUser.setRoles(roles);
+        return sharedUser;
     }
 
     /**
