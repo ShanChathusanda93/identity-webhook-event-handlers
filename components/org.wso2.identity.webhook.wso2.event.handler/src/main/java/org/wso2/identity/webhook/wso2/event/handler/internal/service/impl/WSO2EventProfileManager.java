@@ -31,6 +31,7 @@ import static org.wso2.identity.webhook.common.event.handler.api.constants.Const
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.CREDENTIAL_CHANGE_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.LOGIN_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.ORGANIZATION_MGT_CHANNEL;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.USER_SHARING_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.ROLE_MANAGEMENT_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.SESSION_CHANNEL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.TOKEN_CHANNEL;
@@ -60,9 +61,13 @@ import static org.wso2.identity.webhook.common.event.handler.api.constants.Const
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_DELETED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_ENABLED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_DISABLED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.USER_SHARED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.USER_UNSHARED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_ORGANIZATION_UPDATED_EVENT;
 import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_ADD_ORGANIZATION;
 import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_DELETE_ORGANIZATION;
+import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_SHARE_USER;
+import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_UNSHARE_USER;
 import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_PATCH_ORGANIZATION;
 import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_UPDATE_ORGANIZATION;
 import static org.wso2.carbon.identity.organization.management.ext.Constants.EVENT_POST_DISABLE_ORGANIZATION;
@@ -197,6 +202,14 @@ public class WSO2EventProfileManager implements EventProfileManager {
             } else if (EVENT_POST_DISABLE_ORGANIZATION.equals(eventName)) {
                 channel = ORGANIZATION_MGT_CHANNEL;
                 event = POST_ORGANIZATION_DISABLED_EVENT;
+            } else if (EVENT_POST_SHARE_USER.equals(eventName)) {
+                // The organization the user was shared to receives sharedUserAdded, published by the handler.
+                channel = USER_SHARING_CHANNEL;
+                event = USER_SHARED_EVENT;
+            } else if (EVENT_POST_UNSHARE_USER.equals(eventName)) {
+                // The organization the user was shared to receives sharedUserRemoved, published by the handler.
+                channel = USER_SHARING_CHANNEL;
+                event = USER_UNSHARED_EVENT;
             }
         }
         return EventMetadata.builder()

@@ -132,6 +132,19 @@ public class WSO2PayloadUtils {
 
     public static void populateUserClaims(User user, String userId, String tenantDomain) {
 
+        populateUserClaims(user, userId, tenantDomain, new String[] {USERNAME_CLAIM_URI, EMAIL_CLAIM_URI});
+    }
+
+    /**
+     * Populate the given user with the requested claims, read from the user store of the given tenant.
+     *
+     * @param user         User to populate.
+     * @param userId       Id of the user.
+     * @param tenantDomain Tenant domain the user belongs to.
+     * @param claimUris    The claim URIs to read.
+     */
+    public static void populateUserClaims(User user, String userId, String tenantDomain, String[] claimUris) {
+
         UserStoreManager userStoreManager = getUserStoreManagerByTenantDomain(tenantDomain);
         if (!(userStoreManager instanceof UniqueIDUserStoreManager)) {
             return;
@@ -140,7 +153,7 @@ public class WSO2PayloadUtils {
         Map<String, String> claimValues;
         try {
             claimValues = ((UniqueIDUserStoreManager) userStoreManager).getUserClaimValuesWithID(
-                    userId, new String[] {USERNAME_CLAIM_URI, EMAIL_CLAIM_URI}, null);
+                    userId, claimUris, null);
         } catch (org.wso2.carbon.user.core.UserStoreException e) {
             String nonExistingUserErrorCode = ERROR_CODE_NON_EXISTING_USER.getCode();
             // Older user store managers carry the error code only as a prefix of the message.

@@ -52,6 +52,7 @@ public class Constants {
         public static final String CONSENT_PURPOSE_CHANNEL = "https://schemas.identity.wso2.org/events/consent-purpose";
         public static final String ROLE_MANAGEMENT_CHANNEL = "https://schemas.identity.wso2.org/events/role";
         public static final String ORGANIZATION_MGT_CHANNEL = "https://schemas.identity.wso2.org/events/organization";
+        public static final String USER_SHARING_CHANNEL = "https://schemas.identity.wso2.org/events/user-sharing";
     }
 
     /**
@@ -107,6 +108,16 @@ public class Constants {
                 "https://schemas.identity.wso2.org/events/organization/event-type/organizationEnabled";
         public static final String POST_ORGANIZATION_DISABLED_EVENT =
                 "https://schemas.identity.wso2.org/events/organization/event-type/organizationDisabled";
+        // Delivered to the organization the user was shared from.
+        public static final String USER_SHARED_EVENT =
+                "https://schemas.identity.wso2.org/events/user-sharing/event-type/userShared";
+        public static final String USER_UNSHARED_EVENT =
+                "https://schemas.identity.wso2.org/events/user-sharing/event-type/userUnshared";
+        // Delivered to the organization the user was shared to.
+        public static final String SHARED_USER_ADDED_EVENT =
+                "https://schemas.identity.wso2.org/events/user-sharing/event-type/sharedUserAdded";
+        public static final String SHARED_USER_REMOVED_EVENT =
+                "https://schemas.identity.wso2.org/events/user-sharing/event-type/sharedUserRemoved";
     }
 
     /**
