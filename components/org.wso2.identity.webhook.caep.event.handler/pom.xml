@@ -20,7 +20,7 @@
     <parent>
         <artifactId>identity-webhook-event-handlers</artifactId>
         <groupId>org.wso2.identity.webhook.event.handlers</groupId>
-        <version>1.2.22-SNAPSHOT</version>
+        <version>1.2.22</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
