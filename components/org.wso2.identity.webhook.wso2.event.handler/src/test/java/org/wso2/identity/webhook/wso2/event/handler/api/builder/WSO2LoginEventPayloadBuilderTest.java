@@ -29,9 +29,12 @@ import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.wso2.carbon.base.CarbonBaseConstants;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.ExternalIdPConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.SequenceConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.StepConfig;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthHistory;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkUtils;
 import org.wso2.carbon.identity.application.common.model.Claim;
 import org.wso2.carbon.identity.application.common.model.ClaimMapping;
@@ -49,15 +52,21 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.component.WSO2Event
 import org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2AuthenticationFailedEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2AuthenticationSuccessEventPayload;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2BaseEventPayload;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
+import org.wso2.identity.webhook.wso2.event.handler.internal.util.WSO2PayloadUtils;
 
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 import static org.wso2.identity.webhook.wso2.event.handler.internal.util.TestUtils.closeMockedIdentityTenantUtil;
 import static org.wso2.identity.webhook.wso2.event.handler.internal.util.TestUtils.closeMockedServiceURLBuilder;
@@ -81,6 +90,7 @@ public class WSO2LoginEventPayloadBuilderTest {
     private static final String SAMPLE_USER_REF = "https://localhost:9443/t/myorg/scim2/Users/" + SAMPLE_USER_ID;
     private static final String SAMPLE_ERROR_MESSAGE = "Sample error message";
     private static final String SAMPLE_INITIATOR_IP = "203.0.113.10";
+    private static final String SAMPLE_MAIN_APP_ID = "5f2a3c1e-8d4b-4e0a-9c7f-1b2d3e4f5a6b";
 
     @Mock
     private EventData mockEventData;
@@ -259,6 +269,144 @@ public class WSO2LoginEventPayloadBuilderTest {
         assertEquals(failedPayload.getReason().getContext().getFailedStep().getAuthenticator(), SAMPLE_AUTHENTICATOR);
         assertEquals(failedPayload.getInitiatorIpAddress(), SAMPLE_INITIATOR_IP);
 
+    }
+
+    @DataProvider(name = "organizationAwarePayloadDataProvider")
+    public Object[][] organizationAwarePayloadDataProvider() {
+
+        return new Object[][] {
+                {false},
+                {true}
+        };
+    }
+
+    @Test(dataProvider = "organizationAwarePayloadDataProvider")
+    public void testBuildAuthenticationEventsAreOrganizationAwareOnlyWhileEnabled(boolean organizationAware)
+            throws IdentityEventException {
+
+        Organization contextOrganization = new Organization("context-org-id", "context-org", "context-org", 0);
+        Organization eventOrganization = new Organization("event-org-id", "event-org", "event-org", 1);
+        Organization applicationOrganization = new Organization("app-org-id", "app-org", "app-org", 0);
+        when(mockEventData.getAuthenticationContext()).thenReturn(mockAuthenticationContext);
+        when(mockEventData.getAuthenticatedUser()).thenReturn(mockAuthenticatedUser);
+        when(mockEventData.getTenantDomain()).thenReturn(SAMPLE_TENANT_DOMAIN);
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Mockito.CALLS_REAL_METHODS)) {
+            payloadUtils.when(WSO2PayloadUtils::isOrganizationAwarePayloadEnabled).thenReturn(organizationAware);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildOrganizationFromIdentityContext(any()))
+                    .thenReturn(contextOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveEventOrganization(SAMPLE_TENANT_DOMAIN))
+                    .thenReturn(eventOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveApplicationResourceId(SAMPLE_SP_ID, SAMPLE_TENANT_DOMAIN))
+                    .thenReturn(SAMPLE_MAIN_APP_ID);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildApplicationOrganization(
+                    any(AuthenticationContext.class), anyString())).thenReturn(applicationOrganization);
+
+            WSO2AuthenticationSuccessEventPayload successPayload = (WSO2AuthenticationSuccessEventPayload)
+                    payloadBuilder.buildAuthenticationSuccessEvent(mockEventData);
+            WSO2AuthenticationFailedEventPayload failedPayload = (WSO2AuthenticationFailedEventPayload)
+                    payloadBuilder.buildAuthenticationFailedEvent(mockEventData);
+
+            String expectedApplicationId = organizationAware ? SAMPLE_MAIN_APP_ID : SAMPLE_SP_ID;
+            Organization expectedOrganization = organizationAware ? eventOrganization : contextOrganization;
+            for (WSO2BaseEventPayload basePayload : new WSO2BaseEventPayload[] {successPayload, failedPayload}) {
+                assertEquals(basePayload.getApplication().getId(), expectedApplicationId);
+                if (organizationAware) {
+                    assertEquals(basePayload.getApplication().getOrganization(), applicationOrganization);
+                } else {
+                    assertNull(basePayload.getApplication().getOrganization());
+                }
+                assertEquals(basePayload.getUser().getOrganization(), expectedOrganization);
+            }
+        }
+    }
+
+    @Test
+    public void testBuildAuthenticationFailedEventReportsOrganizationOfSharedUser() throws Exception {
+
+        Organization eventOrganization = new Organization("event-org-id", "event-org", "event-org", 1);
+        Organization residentOrganization = new Organization("resident-org-id", "resident-org", "resident-org", 0);
+        AuthenticatedUser sharedUser = new AuthenticatedUser();
+        sharedUser.setUserName(SAMPLE_USER_NAME);
+        sharedUser.setTenantDomain(SAMPLE_TENANT_DOMAIN);
+        sharedUser.setSharedUser(true);
+        sharedUser.setUserResidentOrganization("resident-org-id");
+        StepConfig identifierStep = new StepConfig();
+        identifierStep.setAuthenticatedUser(sharedUser);
+        SequenceConfig sequenceConfig = new SequenceConfig();
+        sequenceConfig.getStepMap().put(1, identifierStep);
+        AuthenticationContext context = createMockAuthenticationContext();
+        context.setSequenceConfig(sequenceConfig);
+        when(mockEventData.getAuthenticationContext()).thenReturn(context);
+        when(mockEventData.getTenantDomain()).thenReturn(SAMPLE_TENANT_DOMAIN);
+        when(mockOrganizationManager.resolveTenantDomain("resident-org-id")).thenReturn(SAMPLE_TENANT_DOMAIN);
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Mockito.CALLS_REAL_METHODS)) {
+            payloadUtils.when(WSO2PayloadUtils::isOrganizationAwarePayloadEnabled).thenReturn(true);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveEventOrganization(SAMPLE_TENANT_DOMAIN))
+                    .thenReturn(eventOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildOrganizationFromOrgId("resident-org-id",
+                    SAMPLE_TENANT_DOMAIN)).thenReturn(residentOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveApplicationResourceId(anyString(), anyString()))
+                    .thenReturn(SAMPLE_SP_ID);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildApplicationOrganization(
+                    any(AuthenticationContext.class), anyString())).thenReturn(null);
+
+            WSO2AuthenticationFailedEventPayload failedPayload = (WSO2AuthenticationFailedEventPayload)
+                    payloadBuilder.buildAuthenticationFailedEvent(mockEventData);
+
+            assertEquals(failedPayload.getUser().getOrganization(), residentOrganization);
+            assertEquals(failedPayload.getOrganization(), eventOrganization);
+        }
+    }
+
+    @DataProvider(name = "sharedUserIdentifierLoginDataProvider")
+    public Object[][] sharedUserIdentifierLoginDataProvider() {
+
+        // Organization aware, through the shared user identifier, user organization reported.
+        return new Object[][] {
+                {true, true, false},
+                {true, false, true},
+                {false, true, true}
+        };
+    }
+
+    @Test(dataProvider = "sharedUserIdentifierLoginDataProvider")
+    public void testBuildAuthenticationFailedEventWithoutSharedUser(boolean organizationAware,
+                                                                    boolean sharedUserIdentifierLogin,
+                                                                    boolean userOrganizationReported)
+            throws IdentityEventException {
+
+        Organization eventOrganization = new Organization("event-org-id", "event-org", "event-org", 1);
+        AuthenticationContext context = createMockAuthenticationContext();
+        if (sharedUserIdentifierLogin) {
+            context.addAuthenticationStepHistory(new AuthHistory(FrameworkConstants.SHARED_USER_IDENTIFIER_HANDLER,
+                    SAMPLE_IDP));
+        }
+        when(mockEventData.getAuthenticationContext()).thenReturn(context);
+        when(mockEventData.getTenantDomain()).thenReturn(SAMPLE_TENANT_DOMAIN);
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Mockito.CALLS_REAL_METHODS)) {
+            payloadUtils.when(WSO2PayloadUtils::isOrganizationAwarePayloadEnabled).thenReturn(organizationAware);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildOrganizationFromIdentityContext(any()))
+                    .thenReturn(eventOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveEventOrganization(SAMPLE_TENANT_DOMAIN))
+                    .thenReturn(eventOrganization);
+            payloadUtils.when(() -> WSO2PayloadUtils.resolveApplicationResourceId(anyString(), anyString()))
+                    .thenReturn(SAMPLE_SP_ID);
+            payloadUtils.when(() -> WSO2PayloadUtils.buildApplicationOrganization(
+                    any(AuthenticationContext.class), anyString())).thenReturn(null);
+
+            WSO2AuthenticationFailedEventPayload failedPayload = (WSO2AuthenticationFailedEventPayload)
+                    payloadBuilder.buildAuthenticationFailedEvent(mockEventData);
+
+            assertEquals(failedPayload.getUser().getOrganization(),
+                    userOrganizationReported ? eventOrganization : null);
+            assertEquals(failedPayload.getOrganization(), eventOrganization);
+        }
     }
 
     private AuthenticationContext createMockAuthenticationContext() {

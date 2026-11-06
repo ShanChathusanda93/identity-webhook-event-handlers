@@ -126,19 +126,57 @@ public class SessionEventHookHandler extends AbstractEventHandler {
             return;
         }
 
-        if (EventHookHandlerUtils.isB2BUserLogin(eventData.getAuthenticationContext())) {
+        String tenantDomain = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
+        if (!EventHookHandlerUtils.isChildOrganizationSubscriptionEnabled()) {
+            // Without child organization subscriptions, the owning organization's side of a federation based
+            // organization login is not published, as before.
+            if (EventHookHandlerUtils.isFederationBasedOrganizationLogin(eventData.getAuthenticationContext())) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Session event is triggered for a federation based organization login. Skipping " +
+                            "event handling for session event profile: " + eventProfile.getProfile());
+                }
+                return;
+            }
+            publishSessionEvent(tenantDomain, sessionChannel, eventUri, eventProfile.getProfile(), schema,
+                    payloadBuilder, eventData, event);
+            return;
+        }
+        // A shared application login (when enhanced organization login is disabled) raises this event in the
+        // sub organization and in the owning organization. Only the latter event will be published.
+        if (EventHookHandlerUtils.isSubOrganizationLoginOfSharedApplication(eventData.getAuthenticationContext())) {
             if (log.isDebugEnabled()) {
-                log.debug(
-                        "Session event is triggered for a B2B user federation. Skipping event handling for login event profile: " +
-                                eventProfile.getProfile());
+                log.debug("Session event is raised in the sub organization of a shared application login, " +
+                        "which is not published from there. Skipping session event profile: " +
+                        eventProfile.getProfile());
             }
             return;
         }
-
-        // Publish for current accessing org
-        String tenantDomain = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
+        // A session is published to, and built for, the organization its login accessed, else the event's own one.
+        EventData publishingEventData = eventData;
+        String accessedOrganizationTenantDomain = resolveAccessedOrganizationTenantDomain(eventData);
+        if (StringUtils.isNotBlank(accessedOrganizationTenantDomain)) {
+            tenantDomain = accessedOrganizationTenantDomain;
+            publishingEventData = eventData.toBuilder().tenantDomain(accessedOrganizationTenantDomain).build();
+        } else if (StringUtils.isNotBlank(eventData.getTenantDomain())) {
+            tenantDomain = eventData.getTenantDomain();
+        }
         publishSessionEvent(tenantDomain, sessionChannel, eventUri, eventProfile.getProfile(), schema,
-                payloadBuilder, eventData, event);
+                payloadBuilder, publishingEventData, event);
+    }
+
+    /**
+     * Tenant of the organization a session accessed: as its login records it, or else as its user names it, since an
+     * event ending the session, such as a logout, does not carry the login that accessed the organization.
+     *
+     * @param eventData Data of the session event.
+     * @return Tenant domain of the accessed organization, or null when there is none or it cannot be resolved.
+     */
+    private String resolveAccessedOrganizationTenantDomain(EventData eventData) {
+
+        String accessedOrganizationTenantDomain =
+                EventHookHandlerUtils.resolveAccessedOrganizationTenantDomain(eventData);
+        return StringUtils.isNotBlank(accessedOrganizationTenantDomain) ? accessedOrganizationTenantDomain
+                : EventHookHandlerUtils.resolveUserAccessingOrganizationTenantDomain(eventData.getAuthenticatedUser());
     }
 
     private List<EventProfile> getEventProfiles() {

@@ -30,8 +30,15 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.wso2.carbon.identity.application.authentication.framework.AuthenticatorStatus;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.ApplicationConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.SequenceConfig;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.application.authentication.framework.model.OrganizationData;
+import org.wso2.carbon.identity.application.authentication.framework.model.OrganizationLoginData;
+import org.wso2.carbon.identity.application.common.model.ServiceProvider;
+import org.wso2.carbon.identity.application.common.model.ServiceProviderProperty;
+import org.wso2.carbon.identity.application.mgt.ApplicationConstants;
 import org.wso2.carbon.identity.configuration.mgt.core.ConfigurationManager;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
@@ -42,6 +49,8 @@ import org.wso2.carbon.identity.event.publisher.api.model.EventContext;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayload;
 import org.wso2.carbon.identity.event.publisher.api.service.EventPublisherService;
+import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
+import org.wso2.carbon.identity.organization.management.service.util.OrganizationManagementUtil;
 import org.wso2.carbon.identity.topic.management.api.service.TopicManagementService;
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
@@ -67,6 +76,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -85,6 +95,8 @@ public class LoginEventHookHandlerTest {
 
     private static final String SAMPLE_TENANT_DOMAIN = "myorg";
     private static final String SAMPLE_USER = "user";
+    private static final String SAMPLE_SUB_ORG_TENANT_DOMAIN = "sub-org-tenant";
+    private static final String SAMPLE_ACCESSING_ORG_HANDLE = "accessing-org";
     private static final String SAMPLE_EVENT_KEY_LOGIN_SUCCESS =
             "https://schemas.identity.wso2.org/events/logins/event-type/loginSuccess";
     private static final String SAMPLE_EVENT_KEY_LOGIN_FAILED =
@@ -253,6 +265,241 @@ public class LoginEventHookHandlerTest {
         loginEventHookHandler.handleEvent(event);
 
         verify(mockedEventPublisherService, times(0)).publish(any(), any());
+    }
+
+    @Test
+    public void testHandleEventSkipsB2BLoginWhileChildOrganizationSubscriptionIsDisabled() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        handleLoginSuccessEvent(context, false, true, false);
+
+        verify(mockedEventPublisherService, never()).publish(any(), any());
+    }
+
+    @Test
+    public void testHandleEventPublishesToLoginTenantWhileChildOrganizationSubscriptionIsDisabled()
+            throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        when(context.getOrganizationLoginData()).thenReturn(mockOrganizationLoginData());
+        handleLoginSuccessEvent(context, false, false, true);
+
+        verifyPublishedTo(SAMPLE_SUB_ORG_TENANT_DOMAIN);
+    }
+
+    @Test
+    public void testHandleEventPublishesB2BLoginToAccessingOrganizationWhileChildOrganizationSubscriptionIsEnabled()
+            throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        when(context.getOrganizationLoginData()).thenReturn(mockOrganizationLoginData());
+        handleLoginSuccessEvent(context, true, true, true);
+
+        verifyPublishedTo(SAMPLE_ACCESSING_ORG_HANDLE);
+    }
+
+    @Test
+    public void testHandleEventPublishesSharedApplicationLoginToAccessingOrganization() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        when(context.isSharedAppLogin()).thenReturn(true);
+        when(context.getOrganizationLoginData()).thenReturn(mockOrganizationLoginData());
+        handleLoginSuccessEvent(context, true, false, true);
+
+        verifyPublishedTo(SAMPLE_ACCESSING_ORG_HANDLE);
+    }
+
+    @Test
+    public void testHandleEventPublishesDirectLoginToSharedApplicationInSubOrganization() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(true);
+        mockSharedApplication(context);
+        handleLoginSuccessEvent(context, true, false, true);
+
+        verifyPublishedTo(SAMPLE_SUB_ORG_TENANT_DOMAIN);
+    }
+
+    @Test
+    public void testHandleEventSkipsSuccessOfSharedApplicationInSubOrganization() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        mockSharedApplication(context);
+        handleLoginSuccessEvent(context, true, false, true);
+
+        verify(mockedEventPublisherService, never()).publish(any(), any());
+    }
+
+    @Test
+    public void testHandleEventSkipsFailureOfSharedApplicationInSubOrganization() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        mockSharedApplication(context);
+        handleLoginEvent(context, null, IdentityEventConstants.EventName.AUTHENTICATION_STEP_FAILURE.name(), true,
+                false, true);
+
+        verify(mockedEventPublisherService, never()).publish(any(), any());
+    }
+
+    @Test
+    public void testHandleEventPublishesRootOrganizationLoginToLoginTenantWhileChildOrganizationSubscriptionIsEnabled()
+            throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        when(context.getLoginTenantDomain()).thenReturn(SAMPLE_TENANT_DOMAIN);
+        handleLoginSuccessEvent(context, true, false, false);
+
+        verifyPublishedTo(SAMPLE_TENANT_DOMAIN);
+    }
+
+    @Test
+    public void testHandleEventPublishesFederatedLoginOfSharedUserToTheOrganizationItAccessed() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        when(context.getLoginTenantDomain()).thenReturn(SAMPLE_TENANT_DOMAIN);
+        AuthenticatedUser sharedUser = new AuthenticatedUser();
+        sharedUser.setUserName(SAMPLE_USER);
+        sharedUser.setUserResidentOrganization("resident-org-id");
+        sharedUser.setAccessingOrganization("accessed-org-id");
+        OrganizationManager organizationManager = mock(OrganizationManager.class);
+        when(organizationManager.resolveTenantDomain("resident-org-id")).thenReturn("resident-org");
+        when(organizationManager.resolveTenantDomain("accessed-org-id")).thenReturn(SAMPLE_ACCESSING_ORG_HANDLE);
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(organizationManager);
+
+        handleLoginSuccessEvent(context, sharedUser, true, true, false);
+
+        verifyPublishedTo(SAMPLE_ACCESSING_ORG_HANDLE);
+    }
+
+    @Test
+    public void testHandleEventPublishesFederatedLoginWithoutAccessedOrganizationToTheLoginTenant() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        when(context.getLoginTenantDomain()).thenReturn(SAMPLE_TENANT_DOMAIN);
+        AuthenticatedUser user = new AuthenticatedUser();
+        user.setUserName(SAMPLE_USER);
+        user.setUserResidentOrganization("resident-org-id");
+        OrganizationManager organizationManager = mock(OrganizationManager.class);
+        when(organizationManager.resolveTenantDomain("resident-org-id")).thenReturn("resident-org");
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(organizationManager);
+
+        handleLoginSuccessEvent(context, user, true, true, false);
+
+        verifyPublishedTo(SAMPLE_TENANT_DOMAIN);
+    }
+
+    @Test
+    public void testHandleEventPublishesNonFederatedSubOrganizationLoginToTheLoginTenant() throws Exception {
+
+        AuthenticationContext context = mockSubOrganizationLoginContext(false);
+        AuthenticatedUser sharedUser = new AuthenticatedUser();
+        sharedUser.setUserName(SAMPLE_USER);
+        sharedUser.setUserResidentOrganization("resident-org-id");
+        OrganizationManager organizationManager = mock(OrganizationManager.class);
+        when(organizationManager.resolveTenantDomain("resident-org-id")).thenReturn("resident-org");
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(organizationManager);
+
+        handleLoginSuccessEvent(context, sharedUser, true, false, true);
+
+        verifyPublishedTo(SAMPLE_SUB_ORG_TENANT_DOMAIN);
+    }
+
+    private void handleLoginSuccessEvent(AuthenticationContext context, boolean childOrganizationSubscriptionEnabled,
+                                         boolean b2bUserLogin, boolean loginTenantIsOrganization)
+            throws Exception {
+
+        handleLoginSuccessEvent(context, null, childOrganizationSubscriptionEnabled, b2bUserLogin,
+                loginTenantIsOrganization);
+    }
+
+    private void handleLoginSuccessEvent(AuthenticationContext context, AuthenticatedUser authenticatedUser,
+                                         boolean childOrganizationSubscriptionEnabled, boolean b2bUserLogin,
+                                         boolean loginTenantIsOrganization) throws Exception {
+
+        handleLoginEvent(context, authenticatedUser, IdentityEventConstants.EventName.AUTHENTICATION_SUCCESS.name(),
+                childOrganizationSubscriptionEnabled, b2bUserLogin, loginTenantIsOrganization);
+    }
+
+    private void handleLoginEvent(AuthenticationContext context, AuthenticatedUser authenticatedUser, String eventName,
+                                  boolean childOrganizationSubscriptionEnabled, boolean b2bUserLogin,
+                                  boolean loginTenantIsOrganization) throws Exception {
+
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_LOGIN_SUCCESS);
+        Channel channel = new Channel("Login Channel", "Logins Channel", "login/channel/uri",
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles())
+                .thenReturn(Collections.singletonList(new EventProfile("WSO2", "uri", ImmutableList.of(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        EventMetadata eventMetadata = mock(EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn("login/channel/uri");
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_LOGIN_SUCCESS);
+        EventData eventData = EventData.builder().eventName(eventName).authenticationContext(context)
+                .authenticatedUser(authenticatedUser).tenantDomain(context.getLoginTenantDomain()).build();
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class);
+             MockedStatic<OrganizationManagementUtil> orgUtilMocked = mockStatic(OrganizationManagementUtil.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getLoginEventPayloadBuilder(any()))
+                    .thenReturn(mockedLoginEventPayloadBuilder);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled)
+                    .thenReturn(childOrganizationSubscriptionEnabled);
+            utilsMocked.when(() -> EventHookHandlerUtils.isFederationBasedOrganizationLogin(context))
+                    .thenReturn(b2bUserLogin);
+            utilsMocked.when(() -> EventHookHandlerUtils.isSubOrganizationLoginOfSharedApplication(context))
+                    .thenCallRealMethod();
+            utilsMocked.when(() -> EventHookHandlerUtils.resolveAccessedOrganizationTenantDomain(any()))
+                    .thenCallRealMethod();
+            utilsMocked.when(() -> EventHookHandlerUtils.resolveUserAccessingOrganizationTenantDomain(any()))
+                    .thenCallRealMethod();
+            orgUtilMocked.when(() -> OrganizationManagementUtil.isOrganization(SAMPLE_SUB_ORG_TENANT_DOMAIN))
+                    .thenReturn(loginTenantIsOrganization);
+
+            loginEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        }
+    }
+
+    private AuthenticationContext mockSubOrganizationLoginContext(boolean orgApplicationLogin) {
+
+        AuthenticationContext context = mock(AuthenticationContext.class);
+        when(context.getLoginTenantDomain()).thenReturn(SAMPLE_SUB_ORG_TENANT_DOMAIN);
+        when(context.isOrgApplicationLogin()).thenReturn(orgApplicationLogin);
+        return context;
+    }
+
+    private void mockSharedApplication(AuthenticationContext context) {
+
+        ServiceProviderProperty fragmentApplication = new ServiceProviderProperty();
+        fragmentApplication.setName(ApplicationConstants.IS_FRAGMENT_APP);
+        fragmentApplication.setValue("true");
+        ServiceProvider serviceProvider = new ServiceProvider();
+        serviceProvider.setSpProperties(new ServiceProviderProperty[]{fragmentApplication});
+        ApplicationConfig applicationConfig = mock(ApplicationConfig.class);
+        when(applicationConfig.getServiceProvider()).thenReturn(serviceProvider);
+        SequenceConfig sequenceConfig = new SequenceConfig();
+        sequenceConfig.setApplicationConfig(applicationConfig);
+        when(context.getSequenceConfig()).thenReturn(sequenceConfig);
+    }
+
+    private OrganizationLoginData mockOrganizationLoginData() {
+
+        OrganizationData accessingOrganization = new OrganizationData();
+        accessingOrganization.setHandle(SAMPLE_ACCESSING_ORG_HANDLE);
+        OrganizationLoginData organizationLoginData = new OrganizationLoginData();
+        organizationLoginData.setAccessingOrganization(accessingOrganization);
+        return organizationLoginData;
+    }
+
+    private void verifyPublishedTo(String tenantDomain) throws EventPublisherException {
+
+        verify(mockedEventPublisherService, times(1))
+                .publish(any(), argThat(ctx -> tenantDomain.equals(ctx.getTenantDomain())));
     }
 
     private void setupDataHolderMocks() {

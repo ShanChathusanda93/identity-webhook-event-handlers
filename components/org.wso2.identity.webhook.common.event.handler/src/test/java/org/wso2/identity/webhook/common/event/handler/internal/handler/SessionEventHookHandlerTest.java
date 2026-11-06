@@ -27,10 +27,16 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
+import org.wso2.carbon.context.PrivilegedCarbonContext;
 import org.wso2.carbon.identity.application.authentication.framework.AuthenticatorStatus;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.ApplicationConfig;
+import org.wso2.carbon.identity.application.authentication.framework.config.model.SequenceConfig;
 import org.wso2.carbon.identity.application.authentication.framework.context.AuthenticationContext;
 import org.wso2.carbon.identity.application.authentication.framework.context.SessionContext;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.application.common.model.ServiceProvider;
+import org.wso2.carbon.identity.application.common.model.ServiceProviderProperty;
+import org.wso2.carbon.identity.application.mgt.ApplicationConstants;
 import org.wso2.carbon.identity.configuration.mgt.core.ConfigurationManager;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
@@ -39,6 +45,7 @@ import org.wso2.carbon.identity.event.publisher.api.model.EventContext;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayload;
 import org.wso2.carbon.identity.event.publisher.api.service.EventPublisherService;
+import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
 import org.wso2.carbon.identity.topic.management.api.service.TopicManagementService;
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
@@ -230,6 +237,272 @@ public class SessionEventHookHandlerTest {
         }
     }
 
+    @DataProvider(name = "b2bUserLoginDataProvider")
+    public Object[][] b2bUserLoginDataProvider() {
+
+        return new Object[][] {
+                {false, 0},
+                {true, 1}
+        };
+    }
+
+    @Test(dataProvider = "b2bUserLoginDataProvider")
+    public void testHandleEventForB2BUserLogin(boolean childOrganizationSubscriptionEnabled, int expectedPublishes)
+            throws Exception {
+
+        String eventName = IdentityEventConstants.EventName.SESSION_CREATE.name();
+        String channelUri = "session/channel/uri";
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        Channel channel = new Channel("Session Channel", "Session Channel", channelUri,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("CAEP", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata eventMetadata =
+                mock(org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(channelUri);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        EventData eventData = mock(EventData.class);
+        AuthenticationContext context = createAuthenticationContext();
+        when(eventData.getAuthenticationContext()).thenReturn(context);
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getSessionEventPayloadBuilder(any()))
+                    .thenReturn(mockedSessionEventPayloadBuilder);
+            when(mockedSessionEventPayloadBuilder.buildSessionEstablishedEvent(any(EventData.class)))
+                    .thenReturn(mockedEventPayload);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString(), any()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled)
+                    .thenReturn(childOrganizationSubscriptionEnabled);
+            utilsMocked.when(() -> EventHookHandlerUtils.isFederationBasedOrganizationLogin(context)).thenReturn(true);
+
+            sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        }
+        verify(mockedEventPublisherService, times(expectedPublishes)).publish(any(), any());
+    }
+
+    @DataProvider(name = "subOrganizationSessionOfSharedApplicationDataProvider")
+    public Object[][] subOrganizationSessionOfSharedApplicationDataProvider() {
+
+        // Child organization subscription enabled, direct login through the organization path, expected publishes.
+        return new Object[][] {
+                {false, false, 1},
+                {true, false, 0},
+                {true, true, 1}
+        };
+    }
+
+    @Test(dataProvider = "subOrganizationSessionOfSharedApplicationDataProvider")
+    public void testHandleEventForSharedApplicationSessionInSubOrganization(
+            boolean childOrganizationSubscriptionEnabled, boolean orgApplicationLogin, int expectedPublishes)
+            throws Exception {
+
+        String eventName = IdentityEventConstants.EventName.SESSION_CREATE.name();
+        String channelUri = "session/channel/uri";
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        Channel channel = new Channel("Session Channel", "Session Channel", channelUri,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("CAEP", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata eventMetadata =
+                mock(org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(channelUri);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        EventData eventData = mock(EventData.class);
+        AuthenticationContext context = createAuthenticationContext();
+        context.setSequenceConfig(createSharedApplicationSequenceConfig());
+        context.setOrgApplicationLogin(orgApplicationLogin);
+        when(eventData.getAuthenticationContext()).thenReturn(context);
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getSessionEventPayloadBuilder(any()))
+                    .thenReturn(mockedSessionEventPayloadBuilder);
+            when(mockedSessionEventPayloadBuilder.buildSessionEstablishedEvent(any(EventData.class)))
+                    .thenReturn(mockedEventPayload);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString(), any()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled)
+                    .thenReturn(childOrganizationSubscriptionEnabled);
+            utilsMocked.when(() -> EventHookHandlerUtils.isSubOrganizationLoginOfSharedApplication(context))
+                    .thenCallRealMethod();
+
+            sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        }
+        verify(mockedEventPublisherService, times(expectedPublishes)).publish(any(), any());
+    }
+
+    @Test
+    public void testHandleEventPublishesSessionOfOrganizationLoginToTheOrganizationItAccessed() throws Exception {
+
+        String eventName = IdentityEventConstants.EventName.SESSION_CREATE.name();
+        String channelUri = "session/channel/uri";
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        Channel channel = new Channel("Session Channel", "Session Channel", channelUri,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("WSO2", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata eventMetadata =
+                mock(org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(channelUri);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        AuthenticationContext context = createAuthenticationContext();
+        EventData eventData = EventData.builder().eventName(eventName).authenticationContext(context)
+                .tenantDomain(SAMPLE_TENANT_DOMAIN).build();
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getSessionEventPayloadBuilder(any()))
+                    .thenReturn(mockedSessionEventPayloadBuilder);
+            when(mockedSessionEventPayloadBuilder.buildSessionEstablishedEvent(any(EventData.class)))
+                    .thenReturn(mockedEventPayload);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString(), any()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled).thenReturn(true);
+            utilsMocked.when(() -> EventHookHandlerUtils.resolveAccessedOrganizationTenantDomain(eventData))
+                    .thenReturn("accessed-org");
+
+            sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        }
+        verify(mockedSessionEventPayloadBuilder).buildSessionEstablishedEvent(
+                argThat(data -> "accessed-org".equals(data.getTenantDomain())));
+        verify(mockedEventPublisherService).publish(any(),
+                argThat(eventContext -> "accessed-org".equals(eventContext.getTenantDomain())));
+    }
+
+    @Test
+    public void testHandleEventPublishesEndedSessionToTheOrganizationTheUserAccessed() throws Exception {
+
+        String eventName = IdentityEventConstants.Event.SESSION_TERMINATE_V2;
+        String channelUri = "session/channel/uri";
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_SESSION_REVOKED);
+        Channel channel = new Channel("Session Channel", "Session Channel", channelUri,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("WSO2", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata eventMetadata =
+                mock(org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(channelUri);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_SESSION_REVOKED);
+        AuthenticatedUser user = mockAuthenticatedUser();
+        user.setAccessingOrganization("accessed-org-id");
+        EventData eventData = EventData.builder().eventName(eventName).authenticatedUser(user)
+                .tenantDomain(SAMPLE_TENANT_DOMAIN).build();
+        OrganizationManager organizationManager = mock(OrganizationManager.class);
+        when(organizationManager.resolveTenantDomain("accessed-org-id")).thenReturn("accessed-org");
+        EventHookHandlerDataHolder.getInstance().setOrganizationManager(organizationManager);
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class)) {
+            factoryMocked.when(() -> PayloadBuilderFactory.getSessionEventPayloadBuilder(any()))
+                    .thenReturn(mockedSessionEventPayloadBuilder);
+            when(mockedSessionEventPayloadBuilder.buildSessionRevokedEvent(any(EventData.class)))
+                    .thenReturn(mockedEventPayload);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString(), any()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled).thenReturn(true);
+            utilsMocked.when(() -> EventHookHandlerUtils.resolveAccessedOrganizationTenantDomain(any()))
+                    .thenCallRealMethod();
+            utilsMocked.when(() -> EventHookHandlerUtils.resolveUserAccessingOrganizationTenantDomain(any()))
+                    .thenCallRealMethod();
+
+            sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        } finally {
+            EventHookHandlerDataHolder.getInstance().setOrganizationManager(null);
+        }
+        verify(mockedSessionEventPayloadBuilder).buildSessionRevokedEvent(
+                argThat(data -> "accessed-org".equals(data.getTenantDomain())));
+        verify(mockedEventPublisherService).publish(any(),
+                argThat(eventContext -> "accessed-org".equals(eventContext.getTenantDomain())));
+    }
+
+    @DataProvider(name = "sessionWithoutAccessedOrganizationDataProvider")
+    public Object[][] sessionWithoutAccessedOrganizationDataProvider() {
+
+        // Child organization subscription enabled, tenant expected to publish to.
+        return new Object[][] {
+                {true, "sub-org"},
+                {false, "request-tenant"}
+        };
+    }
+
+    @Test(dataProvider = "sessionWithoutAccessedOrganizationDataProvider")
+    public void testHandleEventPublishesSessionWithoutAccessedOrganizationToItsOwnTenant(
+            boolean childOrganizationSubscriptionEnabled, String expectedTenantDomain) throws Exception {
+
+        String eventName = IdentityEventConstants.EventName.SESSION_CREATE.name();
+        String channelUri = "session/channel/uri";
+        org.wso2.carbon.identity.webhook.metadata.api.model.Event channelEvent =
+                new org.wso2.carbon.identity.webhook.metadata.api.model.Event(eventName, "description",
+                        SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        Channel channel = new Channel("Session Channel", "Session Channel", channelUri,
+                Collections.singletonList(channelEvent));
+        when(mockedWebhookMetadataService.getSupportedEventProfiles()).thenReturn(Collections.singletonList(
+                new EventProfile("WSO2", "uri", Collections.singletonList(channel))));
+        when(mockedEventPublisherService.canHandleEvent(any(EventContext.class))).thenReturn(true);
+        org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata eventMetadata =
+                mock(org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata.class);
+        when(eventMetadata.getChannel()).thenReturn(channelUri);
+        when(eventMetadata.getEvent()).thenReturn(SAMPLE_EVENT_KEY_SESSION_ESTABLISHED);
+        AuthenticationContext context = createAuthenticationContext();
+        EventData eventData = EventData.builder().eventName(eventName).authenticationContext(context)
+                .tenantDomain("sub-org").build();
+
+        try (MockedStatic<PayloadBuilderFactory> factoryMocked = mockStatic(PayloadBuilderFactory.class);
+             MockedStatic<EventHookHandlerUtils> utilsMocked = mockStatic(EventHookHandlerUtils.class);
+             MockedStatic<PrivilegedCarbonContext> carbonContextMocked =
+                     mockStatic(PrivilegedCarbonContext.class)) {
+            PrivilegedCarbonContext carbonContext = mock(PrivilegedCarbonContext.class);
+            when(carbonContext.getTenantDomain()).thenReturn("request-tenant");
+            carbonContextMocked.when(PrivilegedCarbonContext::getThreadLocalCarbonContext).thenReturn(carbonContext);
+            factoryMocked.when(() -> PayloadBuilderFactory.getSessionEventPayloadBuilder(any()))
+                    .thenReturn(mockedSessionEventPayloadBuilder);
+            when(mockedSessionEventPayloadBuilder.buildSessionEstablishedEvent(any(EventData.class)))
+                    .thenReturn(mockedEventPayload);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildEventDataProvider(any(Event.class)))
+                    .thenReturn(eventData);
+            utilsMocked.when(() -> EventHookHandlerUtils.getEventProfileManagerByProfile(anyString(), anyString()))
+                    .thenReturn(eventMetadata);
+            utilsMocked.when(() -> EventHookHandlerUtils.buildSecurityEventToken(any(), anyString(), any()))
+                    .thenReturn(mock(SecurityEventTokenPayload.class));
+            utilsMocked.when(EventHookHandlerUtils::isChildOrganizationSubscriptionEnabled)
+                    .thenReturn(childOrganizationSubscriptionEnabled);
+
+            sessionEventHookHandler.handleEvent(createEventWithProperties(eventName));
+        }
+        verify(mockedEventPublisherService).publish(any(),
+                argThat(eventContext -> expectedTenantDomain.equals(eventContext.getTenantDomain())));
+    }
+
     @Test
     public void testHandleEventWithNoProfiles() throws Exception {
 
@@ -288,6 +561,20 @@ public class SessionEventHookHandlerTest {
         context.setTenantDomain(SAMPLE_TENANT_DOMAIN);
         context.setServiceProviderName("TestApp");
         return context;
+    }
+
+    private SequenceConfig createSharedApplicationSequenceConfig() {
+
+        ServiceProviderProperty fragmentApplication = new ServiceProviderProperty();
+        fragmentApplication.setName(ApplicationConstants.IS_FRAGMENT_APP);
+        fragmentApplication.setValue("true");
+        ServiceProvider serviceProvider = new ServiceProvider();
+        serviceProvider.setSpProperties(new ServiceProviderProperty[]{fragmentApplication});
+        ApplicationConfig applicationConfig = mock(ApplicationConfig.class);
+        when(applicationConfig.getServiceProvider()).thenReturn(serviceProvider);
+        SequenceConfig sequenceConfig = new SequenceConfig();
+        sequenceConfig.setApplicationConfig(applicationConfig);
+        return sequenceConfig;
     }
 
     private SessionContext createSessionContext() {
