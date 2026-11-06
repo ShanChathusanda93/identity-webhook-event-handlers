@@ -23,6 +23,7 @@ import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentPurpose
 import org.wso2.identity.webhook.common.event.handler.api.builder.CredentialEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.LoginEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.builder.UserSharingEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RegistrationEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.SessionEventPayloadBuilder;
@@ -194,6 +195,25 @@ public class PayloadBuilderFactory {
         List<OrganizationManagementEventPayloadBuilder> organizationManagementEventPayloadBuilders =
                 EventHookHandlerDataHolder.getInstance().getOrgManagementEventPayloadBuilders();
         for (OrganizationManagementEventPayloadBuilder builder : organizationManagementEventPayloadBuilders) {
+            if (builder.getEventSchemaType().equals(eventSchemaType)) {
+                return builder;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get the user sharing event payload builder.
+     *
+     * @param eventSchemaType Event schema type.
+     * @return User sharing event payload builder.
+     */
+    public static UserSharingEventPayloadBuilder getUserSharingEventPayloadBuilder(
+            Constants.EventSchema eventSchemaType) {
+
+        List<UserSharingEventPayloadBuilder> userSharingEventPayloadBuilders =
+                EventHookHandlerDataHolder.getInstance().getUserSharingEventPayloadBuilders();
+        for (UserSharingEventPayloadBuilder builder : userSharingEventPayloadBuilders) {
             if (builder.getEventSchemaType().equals(eventSchemaType)) {
                 return builder;
             }

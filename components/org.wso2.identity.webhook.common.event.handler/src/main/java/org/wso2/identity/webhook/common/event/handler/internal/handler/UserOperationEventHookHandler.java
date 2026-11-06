@@ -47,6 +47,7 @@ import org.wso2.identity.webhook.common.event.handler.internal.util.PayloadBuild
 import java.util.List;
 import java.util.Objects;
 
+import static org.wso2.carbon.identity.organization.management.ext.Constants.USER_SHARING_OPERATION;
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.EVENT_PROFILE_VERSION;
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.PRE_DELETE_USER_ID;
 
@@ -161,7 +162,7 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
 
         Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
         Flow.Name flowName = (flow != null) ? flow.getName() : null;
-        return !Flow.Name.BULK_RESOURCE_UPDATE.equals(flowName) &&
+        return !Flow.Name.BULK_RESOURCE_UPDATE.equals(flowName) && !isUserSharingOperation() &&
                 (IdentityEventConstants.Event.POST_UPDATE_USER_LIST_OF_ROLE.equals(eventName) ||
                         IdentityEventConstants.Event.PRE_DELETE_USER_WITH_ID.equals(eventName) ||
                         IdentityEventConstants.Event.POST_DELETE_USER.equals(eventName) ||
@@ -171,6 +172,15 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
                         IdentityEventConstants.Event.POST_DISABLE_ACCOUNT.equals(eventName) ||
                         IdentityEventConstants.Event.POST_ENABLE_ACCOUNT.equals(eventName) ||
                         IdentityEventConstants.Event.POST_ADD_USER.equals(eventName));
+    }
+
+    /**
+     * Users created in, and removed from, an organization by user sharing are reported by the user sharing events,
+     * so they are not reported again as user operations.
+     */
+    private boolean isUserSharingOperation() {
+
+        return Boolean.TRUE.equals(IdentityUtil.threadLocalProperties.get().get(USER_SHARING_OPERATION));
     }
 
     private boolean isUserCreatedFlow(String eventName) {

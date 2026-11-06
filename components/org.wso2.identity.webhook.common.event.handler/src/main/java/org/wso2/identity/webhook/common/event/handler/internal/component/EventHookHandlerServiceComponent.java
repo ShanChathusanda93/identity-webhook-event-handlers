@@ -44,6 +44,7 @@ import org.wso2.carbon.identity.webhook.metadata.api.service.WebhookMetadataServ
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentPurposeEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.builder.UserSharingEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
@@ -59,6 +60,7 @@ import org.wso2.identity.webhook.common.event.handler.internal.handler.ConsentPu
 import org.wso2.identity.webhook.common.event.handler.internal.handler.CredentialEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.LoginEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.OrganizationManagementEventHookHandler;
+import org.wso2.identity.webhook.common.event.handler.internal.handler.UserSharingEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.RegistrationEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.RoleManagementEventHookHandler;
 import org.wso2.identity.webhook.common.event.handler.internal.handler.SessionEventHookHandler;
@@ -161,6 +163,15 @@ public class EventHookHandlerServiceComponent {
                     .equalsIgnoreCase(Boolean.TRUE.toString())) {
                 bundleContext.registerService(AbstractEventHandler.class.getName(),
                         new OrganizationManagementEventHookHandler(), null);
+            }
+
+            String isUserSharingEventHandlerEnabled =
+                    getIdentityEventProperty(Constants.USER_SHARING_EVENT_HOOK,
+                            Constants.USER_SHARING_EVENT_HOOK_ENABLE);
+            if (isUserSharingEventHandlerEnabled != null && isUserSharingEventHandlerEnabled
+                    .equalsIgnoreCase(Boolean.TRUE.toString())) {
+                bundleContext.registerService(AbstractEventHandler.class.getName(),
+                        new UserSharingEventHookHandler(), null);
             }
         } catch (IdentityEventServerException e) {
             log.error("Error while activating event handler.", e);
@@ -568,6 +579,28 @@ public class EventHookHandlerServiceComponent {
                 organizationManagementEventPayloadBuilder.getEventSchemaType());
         EventHookHandlerDataHolder.getInstance()
                 .addOrgManagementEventPayloadBuilder(organizationManagementEventPayloadBuilder);
+    }
+
+    @Reference(
+            name = "user.sharing.event.payload.builder",
+            service = UserSharingEventPayloadBuilder.class,
+            cardinality = ReferenceCardinality.MULTIPLE,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "removeUserSharingEventPayloadBuilder"
+    )
+    protected void addUserSharingEventPayloadBuilder(UserSharingEventPayloadBuilder userSharingEventPayloadBuilder) {
+
+        log.debug("Add User Sharing Event Payload Builder service " +
+                userSharingEventPayloadBuilder.getEventSchemaType());
+        EventHookHandlerDataHolder.getInstance().addUserSharingEventPayloadBuilder(userSharingEventPayloadBuilder);
+    }
+
+    protected void removeUserSharingEventPayloadBuilder(
+            UserSharingEventPayloadBuilder userSharingEventPayloadBuilder) {
+
+        log.debug("Remove User Sharing Event Payload Builder service " +
+                userSharingEventPayloadBuilder.getEventSchemaType());
+        EventHookHandlerDataHolder.getInstance().removeUserSharingEventPayloadBuilder(userSharingEventPayloadBuilder);
     }
 
     protected void removeOrganizationEventPayloadBuilder(
