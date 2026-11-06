@@ -40,6 +40,7 @@ import org.wso2.carbon.identity.core.ServiceURLBuilder;
 import org.wso2.carbon.identity.core.URLBuilderException;
 import org.wso2.carbon.identity.core.context.IdentityContext;
 import org.wso2.carbon.identity.core.context.model.Organization;
+import org.wso2.carbon.identity.core.context.model.RootOrganization;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
@@ -136,6 +137,22 @@ public class EventHookHandlerUtils {
                                                                     String eventUri, Subject subId)
             throws IdentityEventException {
 
+        return buildSecurityEventToken(eventPayload, eventUri, subId, constructBaseURL());
+    }
+
+    /**
+     * Build a security event token with the given issuer.
+     *
+     * @param eventPayload Event payload.
+     * @param eventUri     Event URI.
+     * @param subId        Subject of the event, or null.
+     * @param issuer       Issuer of the event.
+     * @return Security event token payload.
+     */
+    public static SecurityEventTokenPayload buildSecurityEventToken(EventPayload eventPayload, String eventUri,
+                                                                    Subject subId, String issuer)
+            throws IdentityEventException {
+
         if (eventPayload == null) {
             throw new IdentityEventException("Invalid event payload input: Event payload input cannot be null.");
         }
@@ -148,7 +165,7 @@ public class EventHookHandlerUtils {
         eventMap.put(eventUri, eventPayload);
 
         return SecurityEventTokenPayload.builder()
-                .iss(constructBaseURL())
+                .iss(issuer)
                 .iat(System.currentTimeMillis())
                 .jti(UUID.randomUUID().toString())
                 .rci(getCorrelationID())
@@ -175,33 +192,49 @@ public class EventHookHandlerUtils {
      */
     public static String constructBaseURL() {
 
+        IdentityContext identityContext = IdentityContext.getThreadLocalIdentityContext();
+        Organization organization = identityContext.getOrganization();
+        return buildOrganizationURL(organization != null && organization.getDepth() != 0 ? organization.getId() : null);
+    }
+
+    /**
+     * Get the URL of an organization in the hierarchy of the root organization on the thread.
+     *
+     * @param organizationId ID of the organization, which can be the root organization.
+     * @return URL of the organization, or null when it cannot be built.
+     */
+    public static String constructOrganizationBaseURL(String organizationId) {
+
+        if (StringUtils.isBlank(organizationId)) {
+            return null;
+        }
+        RootOrganization rootOrganization = IdentityContext.getThreadLocalIdentityContext().getRootOrganization();
+        // The root organization is addressed by its tenant alone.
+        boolean isRootOrganization = rootOrganization != null &&
+                organizationId.equals(rootOrganization.getOrganizationId());
+        return buildOrganizationURL(isRootOrganization ? null : organizationId);
+    }
+
+    /**
+     * Build the URL of the root organization on the thread, or of the given sub organization within it.
+     *
+     * @param subOrganizationId ID of the sub organization, or null for the root organization.
+     * @return URL of the organization, or null when it cannot be built.
+     */
+    private static String buildOrganizationURL(String subOrganizationId) {
+
+        RootOrganization rootOrganization = IdentityContext.getThreadLocalIdentityContext().getRootOrganization();
+        if (rootOrganization == null || StringUtils.isBlank(rootOrganization.getAssociatedTenantDomain())) {
+            return null;
+        }
+        String path = "/t/" + rootOrganization.getAssociatedTenantDomain();
+        if (StringUtils.isNotBlank(subOrganizationId)) {
+            path += "/o/" + subOrganizationId;
+        }
         try {
-            IdentityContext identityContext = IdentityContext.getThreadLocalIdentityContext();
-            if (identityContext.getRootOrganization() == null ||
-                    StringUtils.isBlank(identityContext.getRootOrganization().getAssociatedTenantDomain())) {
-                return null;
-            }
-            String rootTenantDomain = identityContext.getRootOrganization().getAssociatedTenantDomain();
-
-            if (identityContext.getOrganization() != null && identityContext.getOrganization().getDepth() != 0) {
-                String organizationId = identityContext.getOrganization().getId();
-                if (StringUtils.isNotBlank(organizationId)) {
-                    log.debug("Resolving root tenant: " + rootTenantDomain +
-                            " and organization ID: " + organizationId);
-                    return ServiceURLBuilder.create()
-                            .addPath("/t/" + rootTenantDomain + "/o/" + organizationId)
-                            .build()
-                            .getAbsolutePublicURL();
-                }
-            }
-
-            return ServiceURLBuilder.create()
-                    .addPath("/t/" + rootTenantDomain)
-                    .build()
-                    .getAbsolutePublicURL();
-
+            return ServiceURLBuilder.create().addPath(path).build().getAbsolutePublicURL();
         } catch (URLBuilderException e) {
-            log.debug("Error occurred while building the tenant qualified URL.", e);
+            log.debug("Error occurred while building the organization URL: " + path, e);
             return null;
         }
     }

@@ -18,6 +18,8 @@
 
 package org.wso2.identity.webhook.wso2.event.handler.internal.model.common;
 
+import java.util.List;
+
 /**
  * Profile a user has in an organization it is shared into, apart from the profile in the organization it resides in.
  */
@@ -25,6 +27,8 @@ public class SharedUserProfile {
 
     private String id;
     private String ref;
+    private Organization organization;
+    private List<SharedUserRole> roles;
 
     public SharedUserProfile(String id, String ref) {
 
@@ -50,5 +54,25 @@ public class SharedUserProfile {
     public void setRef(String ref) {
 
         this.ref = ref;
+    }
+
+    public Organization getOrganization() {
+
+        return organization;
+    }
+
+    public void setOrganization(Organization organization) {
+
+        this.organization = organization;
+    }
+
+    public List<SharedUserRole> getRoles() {
+
+        return roles;
+    }
+
+    public void setRoles(List<SharedUserRole> roles) {
+
+        this.roles = roles;
     }
 }

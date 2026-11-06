@@ -29,6 +29,7 @@ import org.wso2.carbon.identity.webhook.metadata.api.service.WebhookMetadataServ
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.ConsentPurposeEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.OrganizationManagementEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.builder.UserSharingEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
@@ -69,6 +70,7 @@ public class EventHookHandlerDataHolder {
     private final List<RoleManagementEventPayloadBuilder> roleManagementEventPayloadBuilders = new ArrayList<>();
     private final List<OrganizationManagementEventPayloadBuilder> organizationManagementEventPayloadBuilders =
             new ArrayList<>();
+    private final List<UserSharingEventPayloadBuilder> userSharingEventPayloadBuilders = new ArrayList<>();
 
     private EventHookHandlerDataHolder() {
 
@@ -544,5 +546,35 @@ public class EventHookHandlerDataHolder {
             OrganizationManagementEventPayloadBuilder organizationManagementEventPayloadBuilder) {
 
         organizationManagementEventPayloadBuilders.remove(organizationManagementEventPayloadBuilder);
+    }
+
+    /**
+     * Get the list of user sharing event payload builder implementations available.
+     *
+     * @return List of user sharing event payload builder implementations.
+     */
+    public List<UserSharingEventPayloadBuilder> getUserSharingEventPayloadBuilders() {
+
+        return userSharingEventPayloadBuilders;
+    }
+
+    /**
+     * Add a user sharing event payload builder implementation.
+     *
+     * @param userSharingEventPayloadBuilder User sharing event payload builder implementation.
+     */
+    public void addUserSharingEventPayloadBuilder(UserSharingEventPayloadBuilder userSharingEventPayloadBuilder) {
+
+        userSharingEventPayloadBuilders.add(userSharingEventPayloadBuilder);
+    }
+
+    /**
+     * Remove a user sharing event payload builder implementation.
+     *
+     * @param userSharingEventPayloadBuilder User sharing event payload builder implementation.
+     */
+    public void removeUserSharingEventPayloadBuilder(UserSharingEventPayloadBuilder userSharingEventPayloadBuilder) {
+
+        userSharingEventPayloadBuilders.remove(userSharingEventPayloadBuilder);
     }
 }
