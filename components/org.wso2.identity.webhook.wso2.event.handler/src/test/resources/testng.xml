@@ -31,6 +31,7 @@
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2ConsentPurposeEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2RoleManagementEventPayloadBuilderTest"/>
             <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2OrganizationManagementEventPayloadBuilderTest"/>
+            <class name="org.wso2.identity.webhook.wso2.event.handler.api.builder.WSO2UserSharingEventPayloadBuilderTest"/>
         </classes>
     </test>
 </suite>

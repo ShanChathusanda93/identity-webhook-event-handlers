@@ -300,10 +300,12 @@ public class WSO2UserSharingEventPayloadBuilder implements UserSharingEventPaylo
             return new Organization(organizationId, null, null, 0);
         }
         try {
+            Integer depth = WSO2PayloadUtils.getRelativeDepthFromRoot(
+                    organizationManager.getOrganizationDepthInHierarchy(organizationId));
             return new Organization(organizationId,
                     organizationManager.getOrganizationNameById(organizationId),
                     organizationManager.resolveTenantDomain(organizationId),
-                    organizationManager.getOrganizationDepthInHierarchy(organizationId));
+                    depth != null ? depth : 0);
         } catch (OrganizationManagementException e) {
             LOG.debug("Error while resolving the details of the organization: " + organizationId, e);
             return new Organization(organizationId, null, null, 0);
